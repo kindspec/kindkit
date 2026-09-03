@@ -1,0 +1,14 @@
+kindkit is licensed per directory, following the same split as the rest of
+kindspec.
+
+  runner, mutation gate, workflows    MIT
+  case-tree conventions and schemas   CC0-1.0
+
+Full texts are in LICENSES/.
+
+WHY THE SPLIT
+
+The point of kindspec is independent implementations. A conformance case tree
+and the schema describing it must be vendorable into an implementation in any
+language, under any licence, without obligation — so they carry no conditions at
+all. The code that walks the tree is ordinary MIT.

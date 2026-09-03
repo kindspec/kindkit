@@ -1,0 +1,15 @@
+# Normalize line endings; checkout/commit as LF
+* text=auto eol=lf
+
+# Shell scripts must stay LF
+*.sh text eol=lf
+
+# Generated/lock files
+go.sum linguist-generated
+*.lock linguist-generated
+
+# Conformance fixtures assert on EXACT BYTES. Git's end-of-line normalisation
+# would rewrite the CRLF fixture to LF and silently destroy the case that tests
+# line-ending preservation -- the first commit warned it was about to do this.
+# `-text` disables all normalisation for the tree.
+conformance/cases/** -text
