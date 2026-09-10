@@ -1,7 +1,8 @@
 # kindkit
 
-**Status: the runner is extracted; nothing has adopted it yet.** The gate and
-the CI workflow are still rowspec's. No kind depends on this repository.
+**Status: the runner and the mutation gate are extracted; nothing has adopted
+them yet.** The CI workflow is still rowspec's. No kind depends on this
+repository.
 
 The shared machinery behind every [kindspec](https://github.com/kindspec) kind:
 the tree-driven conformance runner, the mutation gate, the case-tree convention,
@@ -37,6 +38,12 @@ same cases.
 merge, and assert on a result. It does not know what a row is, what a block is,
 or what a node is. If a change to the kit requires knowing, the abstraction is
 wrong and the honest answer is to leave it in the kind.
+
+One honest limit: **the gate is Python-only.** It splices mutants with
+`tokenize`, `ast` and `compile`, so a kind whose reference implementation is
+written in something else gets the runner, the conventions and the workflow,
+and has to bring its own gate. The runner has no such limit — it drives a
+fixture tree and never imports anything of the kind's.
 
 ## Using the runner
 
@@ -80,11 +87,114 @@ They raise rather than being counted, so a caller that only counts failures
 cannot turn "nothing ran" into "nothing failed". That is the bug this project
 has now found in its own tooling more times than any other.
 
+## Using the gate
+
+The other half of the same idea: the runner asks whether an implementation
+passes the cases, and the gate asks whether the cases could ever have failed
+it. A kind supplies the **source file** to break, the **mutants**, and a
+**probe** that runs its suite against a given file and says which case ids
+failed.
+
+```python
+from kindkit import Mutant, Verdict, gate
+
+HERE = os.path.dirname(os.path.abspath(__file__))  # anchored, not the cwd
+
+
+def probe(path):
+    """Run MY suite against the implementation in `path`."""
+    result = subprocess.run([sys.executable, RUNNER, path], capture_output=True, text=True)
+    if "case(s) in the fixture tree" not in result.stdout:
+        return Verdict(reached=False)  # it crashed: nothing ran, so nothing caught it
+    return Verdict({line.split()[1] for line in result.stdout.splitlines() if " FAIL " in line})
+
+
+report = gate(
+    source=os.path.join(HERE, "..", "reference", "mykind", "core.py"),
+    mutants=[Mutant("blank-rows-are-dropped", "if line == '':", "if False:")],
+    probe=probe,
+    # A name NOTHING ELSE on the path claims -- see "what a probe has to get
+    # right" below. Never the source file: the scratch file is overwritten and
+    # deleted, and the gate refuses the two being the same file for that reason.
+    scratch=os.path.join(HERE, "mykind_mutant_under_test.py"),
+)
+sys.exit(0 if report.ok else 1)
+```
+
+`old` and `new` are source fragments, matched as **normalised token runs** and
+not as bytes: quote style, indentation, line wrapping and magic trailing commas
+are layout, and a mutant must not care. rowspec's gate matched bytes once,
+`ruff format` rewrote them, twenty-three patterns stopped matching, and the
+gate reported a pass over a suite it was no longer testing.
+
+Six verdicts, of which four fail the run:
+
+    killed      a case that passes without the mutant fails with it
+    equiv       the mutant carries a claim that it cannot be observed, and
+                nothing observed it
+    SURVIVED    a hole in the suite
+    STALE       the pattern matches nothing, matches ambiguously, or does not
+                parse -- so nothing was measured
+    BOGUS       a mutant claimed inert that the suite detects: a false claim
+    BROKEN      the suite reached no verdict, so nothing caught anything
+
+**A mutant whose pattern no longer matches is a failure, never a skip.** So is
+an equivalence claim naming a mutant that no longer exists, which is why a
+claim is a field on the mutant rather than a row in a side table
+([kindspec/rowspec#37](https://github.com/kindspec/rowspec/issues/37) is one
+that outlived its mutant and was ignored in silence). `from_table` is the
+migration path for a gate already written as a table, and it refuses the
+orphan.
+
+**`Verdict(reached=False)` is not a kill.** The mutation may well be what
+crashed the suite -- but no case caught it, because no case ran. That
+distinction is the one the kit's own gate had to be taught: scoring any
+non-zero pytest exit as "caught" counts an unimportable module as a kill.
+
+`source` is never written to. Both paths must be absolute, and both are
+hashed: the implementation across the whole run, the scratch file across each
+probe, so a verdict is always known to describe the bytes the gate chose. A
+run that killed **nothing** fails too: every mutant excused or unmeasured is a
+gate with no mutants, reached one step later.
+
+### What a probe has to get right
+
+Both of these were hit while driving the gate against rowspec, and one of them
+is not loud on its own.
+
+**Give the scratch file a name nothing else on the path claims.** The first
+matching directory wins, and `sys.path[0]` — the directory of the script the
+probe runs — beats `PYTHONPATH`. A leftover file of the same name next to a
+kind's runner shadows the scratch file completely. The kit cannot see this:
+a probe may be any subprocess with any path. It is at least loud, because the
+baseline is probed through the same scratch path, so a probe reading something
+else agrees with itself and **every** mutant survives.
+
+**The kit clears the scratch file's cached bytecode after every write**, and
+that one would not have been loud. A `.pyc` is validated on the source mtime
+in whole *seconds* plus its size, so two mutants of the same size written in
+the same second are indistinguishable to the loader and the second is served
+the first one's code. Unlike shadowing, this is asymmetric — the baseline
+compiles a real `.pyc` and only colliding mutants read it back — so the run
+ends with a mixture of correct and silently wrong verdicts. Measured, on a
+probe doing nothing more exotic than `spec_from_file_location`: exit 0 over a
+mutant the suite provably detects. The kit purges
+`<scratch dir>/__pycache__/<stem>.*.pyc` on each write; anything a probe
+copies elsewhere is the probe's own to handle. A probe that runs its suite in
+a subprocess can remove the whole class rather than the instance by pointing
+`PYTHONPYCACHEPREFIX` at a fresh directory per run, which is what this
+repository's own gate does with `tools/mutation_gate.py`.
+
 ## The standard this has to meet
 
 rowspec is the first consumer and the proof. Adopting the kit must leave its
 suite at **410/410 on both implementations** and the gate at **0 survived,
 0 stale** — the same numbers, not merely green.
+
+Measured, driven from an out-of-tree harness against rowspec unchanged (rowspec
+has not adopted the kit): **74 killed, 0 survived, 2 equivalent, 0 stale**, with
+the same verdict and the same killing cases for all 76 mutants as rowspec's own
+gate reports.
 
 **A kit designed around one consumer is a kit fitted to that consumer.** If the
 abstraction does not survive contact with rowspec, the honest outcome is to say

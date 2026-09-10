@@ -54,7 +54,13 @@ jobs:
           # startup. A check that fails for a reason unrelated to its name is
           # not the check its name claims.
           before = set(sys.modules)
-          for name in ("kindkit", "kindkit.cli", "kindkit.gitmerge", "kindkit.runner"):
+          for name in (
+              "kindkit",
+              "kindkit.cli",
+              "kindkit.gitmerge",
+              "kindkit.mutation",
+              "kindkit.runner",
+          ):
               importlib.import_module(name)
           added = sorted(set(sys.modules) - before)
 
