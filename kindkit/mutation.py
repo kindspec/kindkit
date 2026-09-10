@@ -465,6 +465,14 @@ def gate(
     Probing the installed module instead would leave the one configuration
     that matters untested -- a probe that reads something other than the file
     it is handed then agrees with itself, and every mutant survives.
+
+    Two things a probe that IMPORTS the scratch file has to get right, neither
+    of which the kit can check for it. Give the file a name nothing else on the
+    path claims, because the first matching directory wins and a leftover of
+    that name elsewhere shadows it in silence. And defeat bytecode caching
+    (`PYTHONDONTWRITEBYTECODE=1`): a `.pyc` is validated against the source
+    mtime in WHOLE SECONDS and its size, so two mutants of the same size
+    written in the same second can hand the interpreter the previous one.
     """
     src_path = _anchored(source, "source")
     scratch_path = _anchored(scratch, "scratch")
