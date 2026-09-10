@@ -152,7 +152,11 @@ def test_a_non_string_kind_is_a_hard_failure(tmp_path):
         discover(tmp_path, (".kv",))
 
 
-def test_a_non_string_kind_does_not_strand_the_cases_after_it(tmp_path):
+def test_a_non_string_kind_is_a_tree_fault_not_a_crash(tmp_path):
+    # `run` discovers the whole tree before dispatching, so a tree fault
+    # strands EVERY case, not only those after it. That is deliberate: a
+    # malformed tree has no verdict to give. What matters is that it exits
+    # NO_VERDICT rather than raising, and never as a verdict about a kind.
     (tmp_path / "aaa").mkdir()
     (tmp_path / "aaa" / "expect.json").write_text('{"kind": {"parse": 1}}')
     (tmp_path / "zzz").mkdir()
