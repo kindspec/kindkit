@@ -13,6 +13,7 @@ not to do.
 
 from __future__ import annotations
 
+import glob
 import importlib.util
 import os
 import shutil
@@ -300,6 +301,49 @@ def test_a_probe_that_deletes_what_it_was_handed_is_a_hard_failure(tmp_path):
 
     with pytest.raises(GateError, match="deleted"):
         run_gate([Mutant("refuses-no-equals", *REFUSES_NO_EQUALS)], probe=probe, tmp_path=tmp_path)
+
+
+#: Two mutants of this differ from it by no bytes at all in LENGTH, which is
+#: half of what a `.pyc` is keyed on. The other half is the source mtime in
+#: whole seconds, which the probe below pins so the collision is certain
+#: rather than a race the test would usually lose.
+CACHED = 'MARK = "aaa"\n'
+
+
+def test_a_mutant_is_never_served_the_previous_probes_bytecode(tmp_path):
+    """The one wrong-bytes failure the same-path property does NOT make loud.
+
+    A probe reading the wrong FILE reads it for the baseline too: everything
+    survives, and the run is loud. A probe reading stale BYTECODE reads it
+    only where mtime and size collide, so the run ends with a MIXTURE of
+    correct and silently wrong verdicts -- measured at exit 0 over a mutant
+    the suite provably detects.
+    """
+    source = tmp_path / "impl.py"
+    source.write_text(CACHED)
+    cached = str(tmp_path / "__pycache__" / "under_test.*.pyc")
+
+    def probe(path: str) -> Verdict:
+        # Every write looks to the loader like it happened in the same second.
+        os.utime(path, (1_700_000_000, 1_700_000_000))
+        spec = importlib.util.spec_from_file_location("under_test", path)
+        assert spec is not None and spec.loader is not None
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return Verdict({"mark"} if module.MARK != "aaa" else ())
+
+    report = gate(
+        source=str(source),
+        mutants=[Mutant("mark", 'MARK = "aaa"', 'MARK = "bbb"')],
+        probe=probe,
+        scratch=str(tmp_path / "under_test.py"),
+        report=quiet,
+    )
+    assert report.killed == ("mark",)
+    assert glob.glob(cached), (
+        "no bytecode was cached at all, so this test could not have caught "
+        "the defect it names: bytecode caching is off in this environment"
+    )
 
 
 def test_an_implementation_that_changes_under_the_gate_is_a_hard_failure(tmp_path):

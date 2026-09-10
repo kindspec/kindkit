@@ -44,6 +44,7 @@ compile check turns into a loud failure, never a silent wrong patch.
 from __future__ import annotations
 
 import ast
+import glob
 import hashlib
 import io
 import os
@@ -603,6 +604,35 @@ def _sha(path: str) -> str:
         return hashlib.sha256(handle.read()).hexdigest()
 
 
+def _purge_bytecode(path: str) -> None:
+    """Delete any cached bytecode for `path`, so an import of it compiles it.
+
+    A `.pyc` is validated against the source's mtime in WHOLE SECONDS and its
+    size, so two mutants of the same size written in the same second are
+    indistinguishable to the loader: the second is served the first one's
+    bytecode, and the verdict describes source that is no longer there.
+
+    This one is NOT covered by the baseline-through-the-same-path property,
+    because it is asymmetric. A probe reading the wrong FILE reads it for the
+    baseline too, every mutant survives, and the run is loud. A probe reading
+    stale BYTECODE reads it only where mtime and size happen to collide, so
+    the run ends with a mixture of correct and silently wrong verdicts -- exit
+    0 over a mutant the suite provably detects. Measured, on a probe doing
+    nothing more exotic than `spec_from_file_location`.
+
+    The name a probe imports is still the probe's own problem: `sys.path[0]`
+    beats `PYTHONPATH`, so a file of the same name next to the runner shadows
+    the scratch file, and no amount of care here can see that.
+    """
+    stem = os.path.splitext(os.path.basename(path))[0]
+    cache = os.path.join(os.path.dirname(path), "__pycache__")
+    for stale in glob.glob(os.path.join(glob.escape(cache), glob.escape(stem) + ".*.pyc")):
+        try:
+            os.remove(stale)
+        except OSError:  # pragma: no cover -- a cache we cannot clear is not ours
+            pass
+
+
 def _probe(probe: Probe, path: str, text: str) -> Verdict:
     """Write ``text`` to ``path``, probe it, and prove the bytes did not move.
 
@@ -613,6 +643,7 @@ def _probe(probe: Probe, path: str, text: str) -> Verdict:
     """
     with open(path, "w", encoding="utf-8", newline="") as handle:
         handle.write(text)
+    _purge_bytecode(path)
     before = _sha(path)
     verdict = probe(path)
     if not os.path.exists(path):

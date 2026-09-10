@@ -104,7 +104,9 @@ report = gate(
     source=os.path.join(HERE, "..", "reference", "mykind", "core.py"),
     mutants=[Mutant("blank-rows-are-dropped", "if line == '':", "if False:")],
     probe=probe,
-    scratch=os.path.join(HERE, "mutant_impl.py"),
+    # A name NOTHING ELSE on the path claims -- see "what a probe has to get
+    # right" below.
+    scratch=os.path.join(HERE, "mykind_mutant_under_test.py"),
 )
 sys.exit(0 if report.ok else 1)
 ```
@@ -142,6 +144,31 @@ non-zero pytest exit as "caught" counts an unimportable module as a kill.
 `source` is never written to. Both paths must be absolute, and both are
 hashed: the implementation across the whole run, the scratch file across each
 probe, so a verdict is always known to describe the bytes the gate chose.
+
+### What a probe has to get right
+
+Both of these were hit while driving the gate against rowspec, and one of them
+is not loud on its own.
+
+**Give the scratch file a name nothing else on the path claims.** The first
+matching directory wins, and `sys.path[0]` — the directory of the script the
+probe runs — beats `PYTHONPATH`. A leftover file of the same name next to a
+kind's runner shadows the scratch file completely. The kit cannot see this:
+a probe may be any subprocess with any path. It is at least loud, because the
+baseline is probed through the same scratch path, so a probe reading something
+else agrees with itself and **every** mutant survives.
+
+**The kit clears the scratch file's cached bytecode after every write**, and
+that one would not have been loud. A `.pyc` is validated on the source mtime
+in whole *seconds* plus its size, so two mutants of the same size written in
+the same second are indistinguishable to the loader and the second is served
+the first one's code. Unlike shadowing, this is asymmetric — the baseline
+compiles a real `.pyc` and only colliding mutants read it back — so the run
+ends with a mixture of correct and silently wrong verdicts. Measured, on a
+probe doing nothing more exotic than `spec_from_file_location`: exit 0 over a
+mutant the suite provably detects. The kit purges
+`<scratch dir>/__pycache__/<stem>.*.pyc` on each write; anything a probe
+copies elsewhere is the probe's own to handle.
 
 ## The standard this has to meet
 

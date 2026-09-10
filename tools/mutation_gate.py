@@ -475,10 +475,17 @@ MUTATIONS: tuple[Mutation, ...] = (
         (T_MUT + "test_a_probe_that_rewrites_what_it_was_handed_is_a_hard_failure",),
     ),
     Mutation(
+        "the previous probe's bytecode is served to the next mutant",
+        MUTATION,
+        "    _purge_bytecode(path)",
+        "    pass",
+        (T_MUT + "test_a_mutant_is_never_served_the_previous_probes_bytecode",),
+    ),
+    Mutation(
         "the gate reaches outside the standard library",
         MUTATION,
-        "import ast\nimport hashlib",
-        "import ast\nimport hashlib\n\nimport pytest",
+        "import ast\nimport glob",
+        "import ast\nimport glob\n\nimport pytest",
         (T_MUT + "test_the_gate_imports_nothing_but_the_standard_library",),
     ),
 )
