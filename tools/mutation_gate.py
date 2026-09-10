@@ -45,7 +45,10 @@ class Mutation:
 RUNNER = "kindkit/runner.py"
 CLI = "kindkit/cli.py"
 GITMERGE = "kindkit/gitmerge.py"
+MUTATION = "kindkit/mutation.py"
 KVKIND = "tests/kvkind.py"
+
+T_MUT = "tests/test_mutation.py::"
 
 MUTATIONS: tuple[Mutation, ...] = (
     Mutation(
@@ -253,6 +256,208 @@ MUTATIONS: tuple[Mutation, ...] = (
         (
             "tests/test_runner.py::test_the_suite_rejects_an_implementation_whose_structure_is_the_raw_text",
         ),
+    ),
+    # --- the gate a KIND runs against its own implementation ---------------
+    # Distinct from this file, which gates the kit's own suite. The two share
+    # the matcher and nothing else.
+    Mutation(
+        "a pattern that no longer matches is skipped instead of failing the run",
+        MUTATION,
+        '    if not hits:\n        raise MutantError("pattern no longer matches the source")',
+        "    if not hits:\n        return src",
+        (
+            T_MUT + "test_a_pattern_that_matches_nothing_is_stale_and_fails",
+            T_MUT + "test_a_pattern_still_has_to_match_the_right_construct",
+            T_MUT + "test_ALL_patches_every_occurrence_and_still_refuses_to_match_nothing",
+        ),
+    ),
+    Mutation(
+        "a stale mutant stops failing the run",
+        MUTATION,
+        "self.survived or self.stale or self.bogus",
+        "self.survived or self.bogus",
+        (
+            T_MUT + "test_a_pattern_that_matches_nothing_is_stale_and_fails",
+            T_MUT + "test_an_ambiguous_pattern_is_stale_rather_than_landing_somewhere",
+            T_MUT + "test_a_replacement_that_changes_nothing_is_stale",
+            T_MUT + "test_a_mutation_that_does_not_parse_is_stale_not_a_wrong_patch",
+        ),
+    ),
+    Mutation(
+        "an ambiguous pattern lands on every hit instead of failing",
+        MUTATION,
+        "    if len(hits) > 1 and mode != ALL:",
+        "    if False:",
+        (T_MUT + "test_an_ambiguous_pattern_is_stale_rather_than_landing_somewhere",),
+    ),
+    Mutation(
+        "a replacement that changes nothing is treated as a mutation",
+        MUTATION,
+        '    if out == src:\n        raise MutantError("replacement is a no-op")',
+        '    if False:\n        raise MutantError("replacement is a no-op")',
+        (T_MUT + "test_a_replacement_that_changes_nothing_is_stale",),
+    ),
+    Mutation(
+        "source that does not parse is spliced in anyway",
+        MUTATION,
+        '        raise MutantError(f"mutated source does not parse: {e}") from None',
+        "        pass",
+        (T_MUT + "test_a_mutation_that_does_not_parse_is_stale_not_a_wrong_patch",),
+    ),
+    # --- the four halves of "a reformat cannot disarm a mutant" -------------
+    Mutation(
+        "strings stop being compared by value, so a requote disarms a mutant",
+        MUTATION,
+        "            return (t, repr(ast.literal_eval(s)))",
+        "            return (t, s)",
+        (T_MUT + "test_a_reformat_does_not_disarm_a_mutant",),
+    ),
+    Mutation(
+        "layout tokens stop being dropped, so a rewrap disarms a mutant",
+        MUTATION,
+        "        if tok.type in _SKIP:",
+        "        if False:",
+        (T_MUT + "test_a_reformat_does_not_disarm_a_mutant",),
+    ),
+    Mutation(
+        "a magic trailing comma is significant, so an exploded call disarms a mutant",
+        MUTATION,
+        "    return [t for i, t in enumerate(toks) if i not in kill]",
+        "    return toks",
+        (T_MUT + "test_a_reformat_does_not_disarm_a_mutant",),
+    ),
+    Mutation(
+        "the parens ruff wraps a clause in are significant",
+        MUTATION,
+        "    return [t for k, t in enumerate(toks) if k not in kill]",
+        "    return toks",
+        (T_MUT + "test_a_reformat_does_not_disarm_a_mutant",),
+    ),
+    # --- no verdict is not a kill ------------------------------------------
+    Mutation(
+        "a suite that reached no verdict is scored as having caught the mutant",
+        MUTATION,
+        "            if not verdict.reached:",
+        "            if False:",
+        (T_MUT + "test_a_mutant_that_leaves_the_suite_with_no_verdict_is_broken_not_killed",),
+    ),
+    Mutation(
+        "no verdict on the UNMUTATED source is tolerated",
+        MUTATION,
+        "        if not baseline_verdict.reached:",
+        "        if False:",
+        (T_MUT + "test_no_verdict_on_the_unmutated_source_is_a_hard_failure",),
+    ),
+    Mutation(
+        "kills stop being counted against the baseline",
+        MUTATION,
+        "            caught = tuple(sorted(frozenset(verdict.failures) - baseline))",
+        "            caught = tuple(sorted(frozenset(verdict.failures)))",
+        (T_MUT + "test_a_kill_is_a_case_that_fails_ONLY_under_the_mutant",),
+    ),
+    # --- equivalence is a claim the gate checks -----------------------------
+    Mutation(
+        "an equivalence claim is accepted rather than checked",
+        MUTATION,
+        "            if mutant.equivalent is not None:\n                if caught:",
+        "            if mutant.equivalent is not None:\n                if False:",
+        (T_MUT + "test_an_equivalence_claim_the_suite_refutes_is_a_false_claim",),
+    ),
+    Mutation(
+        "an equivalence claim is ignored, so an inert mutant reads as a hole",
+        MUTATION,
+        "            if mutant.equivalent is not None:",
+        "            if False:",
+        (T_MUT + "test_an_equivalent_mutant_is_reported_separately_and_does_not_fail_the_run",),
+    ),
+    Mutation(
+        "an equivalence claim naming no mutant is dropped instead of refused",
+        MUTATION,
+        "    if orphans:",
+        "    if False:",
+        (T_MUT + "test_an_equivalence_claim_naming_no_mutant_is_refused",),
+    ),
+    Mutation(
+        "a claim in a table never reaches the mutant it excuses",
+        MUTATION,
+        "        built.append(Mutant(name, old, new, mode, claims.get(name)))",
+        "        built.append(Mutant(name, old, new, mode, None))",
+        (T_MUT + "test_a_table_carries_its_claims_onto_the_mutants",),
+    ),
+    # --- a gate that cannot fail --------------------------------------------
+    Mutation(
+        "a gate with no mutants reports a pass",
+        MUTATION,
+        "    if not ordered:",
+        "    if False:",
+        (T_MUT + "test_a_gate_with_no_mutants_is_a_hard_failure",),
+    ),
+    Mutation(
+        "two mutants may share a name, so one of them is never reported",
+        MUTATION,
+        "        if mutant.name in seen:",
+        "        if False:",
+        (T_MUT + "test_two_mutants_sharing_a_name_is_a_hard_failure",),
+    ),
+    # --- paths, and the bytes that were actually measured -------------------
+    Mutation(
+        "a path may resolve against the working directory",
+        MUTATION,
+        "    if not os.path.isabs(text):",
+        "    if False:",
+        (
+            T_MUT + "test_a_relative_source_path_is_refused",
+            T_MUT + "test_a_relative_scratch_path_is_refused",
+        ),
+    ),
+    Mutation(
+        "an anchored path is re-resolved against the working directory",
+        MUTATION,
+        "    return text",
+        "    return os.path.basename(text)",
+        (T_MUT + "test_the_verdict_does_not_depend_on_the_working_directory",),
+    ),
+    Mutation(
+        "the gate mutates the implementation in place",
+        MUTATION,
+        "            verdict = _probe(probe, scratch_path, mutated)",
+        "            verdict = _probe(probe, src_path, mutated)",
+        (T_MUT + "test_the_gate_never_writes_to_the_implementation",),
+    ),
+    Mutation(
+        "the implementation changing under the gate goes unnoticed",
+        MUTATION,
+        "    if _sha(src_path) != origin:",
+        "    if False:",
+        (T_MUT + "test_an_implementation_that_changes_under_the_gate_is_a_hard_failure",),
+    ),
+    Mutation(
+        "the mutated file outlives the run",
+        MUTATION,
+        "        if os.path.exists(scratch_path):\n            os.remove(scratch_path)",
+        "        if False:\n            os.remove(scratch_path)",
+        (T_MUT + "test_the_scratch_file_does_not_outlive_the_run",),
+    ),
+    Mutation(
+        "a probe that deleted what it measured goes unnoticed",
+        MUTATION,
+        "    if not os.path.exists(path):",
+        "    if False:",
+        (T_MUT + "test_a_probe_that_deletes_what_it_was_handed_is_a_hard_failure",),
+    ),
+    Mutation(
+        "a probe that rewrote what it measured goes unnoticed",
+        MUTATION,
+        "    if after != before:",
+        "    if False:",
+        (T_MUT + "test_a_probe_that_rewrites_what_it_was_handed_is_a_hard_failure",),
+    ),
+    Mutation(
+        "the gate reaches outside the standard library",
+        MUTATION,
+        "import ast\nimport hashlib",
+        "import ast\nimport hashlib\n\nimport pytest",
+        (T_MUT + "test_the_gate_imports_nothing_but_the_standard_library",),
     ),
 )
 

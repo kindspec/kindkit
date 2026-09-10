@@ -9,6 +9,17 @@ leave it in the kind.
 
 from kindkit.cli import EXIT_FAILURES, EXIT_NO_VERDICT, EXIT_OK
 from kindkit.cli import main as main
+from kindkit.mutation import (
+    ALL,
+    GateError,
+    GateReport,
+    Mutant,
+    MutantError,
+    Verdict,
+    apply_mutant,
+    from_table,
+    gate,
+)
 from kindkit.runner import (
     CASE_MANIFEST,
     Adapter,
@@ -21,6 +32,7 @@ from kindkit.runner import (
 )
 
 __all__ = [
+    "ALL",
     "CASE_MANIFEST",
     "EXIT_FAILURES",
     "EXIT_NO_VERDICT",
@@ -28,9 +40,17 @@ __all__ = [
     "Adapter",
     "Case",
     "FixtureTreeError",
+    "GateError",
+    "GateReport",
     "Handler",
+    "Mutant",
+    "MutantError",
     "Report",
+    "Verdict",
+    "apply_mutant",
     "discover",
+    "from_table",
+    "gate",
     "main",
     "run",
 ]
