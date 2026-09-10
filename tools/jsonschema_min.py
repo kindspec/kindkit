@@ -1,0 +1,511 @@
+#!/usr/bin/env python3
+# SPDX-License-Identifier: MIT
+r"""A JSON Schema (draft 2020-12) evaluator, in the standard library only.
+
+This exists so that `case-tree/expect.schema.json` can be checked against a
+tree without the kit taking a dependency. It implements a subset of the draft,
+and -- this is the whole point of it being written rather than vendored -- it
+**refuses a schema keyword it does not implement** instead of ignoring one.
+
+That refusal is the §2.2 rule applied to the validator itself. Every general
+JSON Schema implementation is required by the specification to ignore unknown
+keywords, which is correct for interoperability and catastrophic here: a
+constraint the evaluator has not heard of would be silently dropped, and the
+tree would keep reporting a pass over something nobody was checking. A subset
+that says "I cannot check this" is honest; a subset that says "valid" is not.
+
+Deliberate limitations, stated rather than hidden:
+
+* `$ref` resolves only within the document (`#`, `#/$defs/name`). There is no
+  remote resolution and no `$dynamicRef`. A case-body schema is applied
+  alongside the envelope rather than `$ref`-ing it, so nothing needs it.
+* `pattern` and `patternProperties` are ECMA-262 regexes, per the draft, and
+  Python `re` is NOT a drop-in for one. Four divergences reach a case tree --
+  `$`, `.`, `\s`, and `\d`/`\w`/`\b` -- and are translated rather than waved
+  at, with two more refused outright; see `_ecma` and `_compile`. Everything
+  else is Python `re` as written, so
+  a pattern using a construct the two spell differently means one thing here
+  and another in a real validator. Keep the patterns in a vendored schema
+  boring, and check a new one against a real engine.
+* `format` is not implemented, and is therefore rejected rather than ignored.
+"""
+
+from __future__ import annotations
+
+import functools
+import json
+import re
+from typing import Any
+
+#: Keywords that constrain an instance. Anything here is evaluated.
+_APPLICATORS = frozenset(
+    {
+        "type",
+        "enum",
+        "const",
+        "allOf",
+        "anyOf",
+        "oneOf",
+        "not",
+        "if",
+        "then",
+        "else",
+        "properties",
+        "patternProperties",
+        "additionalProperties",
+        "propertyNames",
+        "required",
+        "dependentRequired",
+        "minProperties",
+        "maxProperties",
+        "prefixItems",
+        "items",
+        "contains",
+        "minItems",
+        "maxItems",
+        "uniqueItems",
+        "minLength",
+        "maxLength",
+        "pattern",
+        "minimum",
+        "maximum",
+        "exclusiveMinimum",
+        "exclusiveMaximum",
+        "multipleOf",
+        "$ref",
+    }
+)
+
+#: Keywords that carry no assertion. Ignoring one of these cannot drop a check.
+_ANNOTATIONS = frozenset(
+    {
+        "$schema",
+        "$id",
+        "$anchor",
+        "$comment",
+        "$defs",
+        "title",
+        "description",
+        "default",
+        "examples",
+        "deprecated",
+        "readOnly",
+        "writeOnly",
+    }
+)
+
+_KNOWN = _APPLICATORS | _ANNOTATIONS
+
+
+class SchemaError(Exception):
+    """The schema cannot be evaluated, so no verdict about the instance exists.
+
+    Distinct from an invalid instance on purpose: one is a finding about the
+    data, the other is the absence of a finding at all.
+    """
+
+
+def _is_number(value: Any) -> bool:
+    # `True` is an `int` in Python and is not a number in JSON.
+    return isinstance(value, (int, float)) and not isinstance(value, bool)
+
+
+def _is_integer(value: Any) -> bool:
+    if isinstance(value, bool):
+        return False
+    if isinstance(value, int):
+        return True
+    # 2020-12: a float with zero fractional part IS an integer.
+    return isinstance(value, float) and value.is_integer()
+
+
+_TYPE_CHECKS = {
+    "null": lambda v: v is None,
+    "boolean": lambda v: isinstance(v, bool),
+    "object": lambda v: isinstance(v, dict),
+    "array": lambda v: isinstance(v, list),
+    "string": lambda v: isinstance(v, str),
+    "number": _is_number,
+    "integer": _is_integer,
+}
+
+
+def _canonical(value: Any) -> str:
+    """A stable text form, so `const`/`enum`/`uniqueItems` compare structurally."""
+    return json.dumps(value, sort_keys=True, separators=(",", ":"))
+
+
+def _equal(a: Any, b: Any) -> bool:
+    # `1 == True` in Python and `1 == true` is false in JSON; canonical text
+    # keeps the two apart, and compares objects and arrays by value.
+    return _canonical(a) == _canonical(b)
+
+
+#: ECMA-262's LineTerminator set: LF, CR, U+2028, U+2029. Python's `.` excludes
+#: only LF, so `.` is wider here than in a browser by three characters.
+_ECMA_DOT = "[^\\n\\r\\u2028\\u2029]"
+
+#: ECMA-262 `\s` is WhiteSpace + LineTerminator, and unlike its `\d` and `\w`
+#: it is Unicode-aware -- so `re.ASCII`, which is right for the other two, makes
+#: this one too NARROW. Spelled out rather than flagged.
+_ECMA_SPACE = (
+    "\\t\\v\\f \\u00a0\\ufeff\\u1680\\u2000-\\u200a\\u202f\\u205f\\u3000\\n\\r\\u2028\\u2029"
+)
+
+
+def _ecma(pattern: str) -> str:
+    r"""Translate the ECMA-262/Python divergences that reach a case tree.
+
+    Three of the four are the same shape -- Python is *wider* than ECMA-262 at
+    the end-of-input edge, so an anchored pattern quietly admits a trailing
+    control character it did not mean to. `\s` is the exception and runs the
+    other way; it is below, because assuming the whole family pointed one way
+    is how the wrong version of this docstring got written.
+
+    `$` is the one that bit. ECMA-262 without the `m` flag anchors `$` at the
+    very end of the string; Python's `$` also matches just BEFORE a trailing
+    newline. `{"kind": "merge\n"}` passed `^[a-z0-9]+(-[a-z0-9]+)*$` here while
+    `kindkit/runner.py` rejected the same manifest with `unknown kind
+    'merge\n'` -- a constraint that could not fail on the one input that
+    mattered. Python's `\Z` is exactly ECMA's `$`, so a bare `$` outside a
+    character class becomes `\Z`.
+
+    `.` is the same slip waiting for the first case-body schema that writes
+    `^.{1,40}$`. ECMA-262's `.` excludes all four LineTerminators; Python's
+    excludes only `\n`, so `^.$` matches `"\r"`, U+2028 and U+2029 here and
+    matches none of them in a browser. A bare `.` becomes an explicit negated
+    class.
+
+    `\s` goes the other way and caught an earlier version of this docstring
+    out. ECMA-262's `\d` and `\w` are ASCII-only, so `re.ASCII` in `_compile`
+    is right for them -- but its `\s` is Unicode-aware and includes the
+    LineTerminators, so the same flag makes `\s` too NARROW here. It is spelled
+    out as an explicit class instead.
+
+    `^` needs no translation: without `re.MULTILINE` it is `\A` already.
+
+    One divergence is refused rather than translated. `[]` is an empty class in
+    ECMA-262 and `[^]` matches anything; Python reads that `]` as a literal
+    member. Both readings are defensible and only one can be applied, so a
+    pattern relying on it raises instead of quietly meaning something. `\S`
+    inside a character class is refused for the same reason -- a negated set
+    cannot be inlined into an enclosing class.
+
+    The schema keeps `$`, `.` and `\s`, because `\Z` is not ECMA-262 syntax
+    and the schema is the half that gets vendored into a JavaScript or Go
+    validator. The translation belongs to this evaluator, not to the file it
+    reads. `tests/test_case_schema.py` checks the translation against a real
+    ECMA-262 engine when one is on PATH.
+    """
+    out: list[str] = []
+    escaped = False
+    in_class = False
+    class_start = -1
+    for index, char in enumerate(pattern):
+        if escaped:
+            if char == "s":
+                # `[a\s]` becomes `[a<contents>]`; bare `\s` becomes the class.
+                out[-1:] = [_ECMA_SPACE if in_class else f"[{_ECMA_SPACE}]"]
+            elif char == "S":
+                if in_class:
+                    raise SchemaError(
+                        rf"pattern {pattern!r}: `\S` inside a character class cannot be "
+                        "translated to ECMA-262 semantics, and is refused rather than guessed"
+                    )
+                out[-1:] = [f"[^{_ECMA_SPACE}]"]
+            else:
+                out.append(char)
+            escaped = False
+            continue
+        if char == "\\":
+            out.append(char)
+            escaped = True
+            continue
+        if in_class:
+            # `[]` is an EMPTY class in ECMA-262 and `[^]` matches anything;
+            # Python reads the `]` as a literal member instead. The two cannot
+            # both be right, so a pattern that relies on it is refused.
+            if char == "]" and index == class_start:
+                raise SchemaError(
+                    f"pattern {pattern!r}: `[]`/`[^]` means an empty class in ECMA-262 and a "
+                    "literal `]` in Python. Escape it as `\\]`."
+                )
+            # Otherwise `$` and `.` are literal inside a class in either flavour.
+            in_class = char != "]"
+            out.append(char)
+            continue
+        if char == "[":
+            in_class = True
+            # Where the first member would sit, skipping a leading negation.
+            class_start = index + 2 if pattern[index + 1 : index + 2] == "^" else index + 1
+            out.append(char)
+            continue
+        if char == "$":
+            out.append(r"\Z")
+        elif char == ".":
+            out.append(_ECMA_DOT)
+        else:
+            out.append(char)
+    return "".join(out)
+
+
+@functools.cache
+def _compile(pattern: str, where: str) -> re.Pattern[str]:
+    try:
+        # re.ASCII covers `\d`, `\w` and `\b`: Python's are Unicode-aware and
+        # ECMA-262's are ASCII-only even under `u`, so without the flag `\d`
+        # here matches U+0663 and does not in a browser. It deliberately does
+        # NOT cover `\s`, whose ECMA-262 definition IS Unicode-aware; `_ecma`
+        # rewrites that one before this flag can narrow it.
+        return re.compile(_ecma(pattern), re.ASCII)
+    except re.error as exc:
+        raise SchemaError(f"{where}: uncompilable pattern {pattern!r}: {exc}") from exc
+
+
+class Validator:
+    """Evaluates one schema document against instances."""
+
+    def __init__(self, schema: Any, name: str = "<schema>") -> None:
+        self.name = name
+        self.root = schema
+        self._check_usable(schema, "#")
+
+    # -- schema-side checks: run once, up front, so an unusable schema is
+    # -- never mistaken for a valid instance.
+
+    def _check_usable(self, schema: Any, at: str) -> None:
+        if isinstance(schema, bool):
+            return
+        if not isinstance(schema, dict):
+            raise SchemaError(f"{self.name}{at}: a schema must be an object or a boolean")
+        unknown = sorted(set(schema) - _KNOWN)
+        if unknown:
+            raise SchemaError(
+                f"{self.name}{at}: unimplemented schema keyword(s) {unknown}. "
+                "This evaluator refuses what it cannot check rather than ignoring it."
+            )
+        for key in ("pattern",):
+            if key in schema:
+                _compile(schema[key], f"{self.name}{at}/{key}")
+        for key in ("properties", "patternProperties", "$defs", "dependentRequired"):
+            sub = schema.get(key)
+            if sub is not None and not isinstance(sub, dict):
+                raise SchemaError(f"{self.name}{at}/{key}: must be an object")
+        for name, sub in (schema.get("patternProperties") or {}).items():
+            _compile(name, f"{self.name}{at}/patternProperties/{name}")
+            self._check_usable(sub, f"{at}/patternProperties/{name}")
+        for key in ("properties", "$defs"):
+            for name, sub in (schema.get(key) or {}).items():
+                self._check_usable(sub, f"{at}/{key}/{name}")
+        for key in (
+            "not",
+            "if",
+            "then",
+            "else",
+            "items",
+            "contains",
+            "additionalProperties",
+            "propertyNames",
+        ):
+            if key in schema:
+                self._check_usable(schema[key], f"{at}/{key}")
+        for key in ("allOf", "anyOf", "oneOf", "prefixItems"):
+            entries = schema.get(key)
+            if entries is None:
+                continue
+            if not isinstance(entries, list) or not entries:
+                raise SchemaError(f"{self.name}{at}/{key}: must be a non-empty array")
+            for index, sub in enumerate(entries):
+                self._check_usable(sub, f"{at}/{key}/{index}")
+        if "$ref" in schema:
+            self._resolve(schema["$ref"], at)
+
+    def _resolve(self, ref: Any, at: str) -> Any:
+        if not isinstance(ref, str) or not ref.startswith("#"):
+            raise SchemaError(
+                f"{self.name}{at}/$ref: only same-document refs are supported, got {ref!r}"
+            )
+        target: Any = self.root
+        for token in ref.lstrip("#").strip("/").split("/"):
+            if not token:
+                continue
+            token = token.replace("~1", "/").replace("~0", "~")
+            if not isinstance(target, dict) or token not in target:
+                raise SchemaError(f"{self.name}{at}/$ref: cannot resolve {ref!r}")
+            target = target[token]
+        return target
+
+    # -- instance-side evaluation
+
+    def errors(self, instance: Any, path: str = "") -> list[str]:
+        """Every way ``instance`` violates the schema. Empty means valid."""
+        return self._errors(instance, self.root, path or "$")
+
+    def is_valid(self, instance: Any) -> bool:
+        return not self.errors(instance)
+
+    def _errors(self, value: Any, schema: Any, path: str) -> list[str]:  # noqa: C901
+        if schema is True:
+            return []
+        if schema is False:
+            return [f"{path}: no value is valid here"]
+
+        out: list[str] = []
+
+        if "$ref" in schema:
+            out += self._errors(value, self._resolve(schema["$ref"], path), path)
+
+        if "type" in schema:
+            wanted = schema["type"]
+            names = [wanted] if isinstance(wanted, str) else list(wanted)
+            for name in names:
+                if name not in _TYPE_CHECKS:
+                    raise SchemaError(f"{self.name}: unknown type {name!r}")
+            if not any(_TYPE_CHECKS[name](value) for name in names):
+                out.append(f"{path}: expected type {'|'.join(names)}, got {_typename(value)}")
+
+        if "const" in schema and not _equal(value, schema["const"]):
+            out.append(f"{path}: expected {_canonical(schema['const'])}, got {_canonical(value)}")
+
+        if "enum" in schema and not any(_equal(value, item) for item in schema["enum"]):
+            allowed = ", ".join(_canonical(item) for item in schema["enum"])
+            out.append(f"{path}: {_canonical(value)} is not one of [{allowed}]")
+
+        out += self._combinators(value, schema, path)
+        if isinstance(value, str):
+            out += self._string(value, schema, path)
+        if _is_number(value):
+            out += self._number(value, schema, path)
+        if isinstance(value, list):
+            out += self._array(value, schema, path)
+        if isinstance(value, dict):
+            out += self._object(value, schema, path)
+        return out
+
+    def _combinators(self, value: Any, schema: dict, path: str) -> list[str]:
+        out: list[str] = []
+        for sub in schema.get("allOf", ()):
+            out += self._errors(value, sub, path)
+        if "anyOf" in schema and not any(
+            not self._errors(value, sub, path) for sub in schema["anyOf"]
+        ):
+            out.append(f"{path}: matched none of the {len(schema['anyOf'])} anyOf branches")
+        if "oneOf" in schema:
+            matched = [
+                i for i, sub in enumerate(schema["oneOf"]) if not self._errors(value, sub, path)
+            ]
+            if len(matched) != 1:
+                out.append(
+                    f"{path}: matched {len(matched)} of the {len(schema['oneOf'])} "
+                    "oneOf branches, expected exactly 1"
+                )
+        if "not" in schema and not self._errors(value, schema["not"], path):
+            out.append(f"{path}: must not match the 'not' schema, but does")
+        if "if" in schema:
+            branch = "then" if not self._errors(value, schema["if"], path) else "else"
+            if branch in schema:
+                out += self._errors(value, schema[branch], path)
+        return out
+
+    def _string(self, value: str, schema: dict, path: str) -> list[str]:
+        out: list[str] = []
+        if "minLength" in schema and len(value) < schema["minLength"]:
+            out.append(f"{path}: shorter than minLength {schema['minLength']}")
+        if "maxLength" in schema and len(value) > schema["maxLength"]:
+            out.append(f"{path}: longer than maxLength {schema['maxLength']}")
+        # `_compile`, never `re.search` on the raw pattern: the ECMA-262
+        # translation lives there, and a second match site that skipped it would
+        # be a constraint quietly meaning something else.
+        if "pattern" in schema and not _compile(schema["pattern"], self.name).search(value):
+            out.append(f"{path}: {value!r} does not match pattern {schema['pattern']!r}")
+        return out
+
+    def _number(self, value: Any, schema: dict, path: str) -> list[str]:
+        out: list[str] = []
+        if "minimum" in schema and value < schema["minimum"]:
+            out.append(f"{path}: {value} is below minimum {schema['minimum']}")
+        if "maximum" in schema and value > schema["maximum"]:
+            out.append(f"{path}: {value} is above maximum {schema['maximum']}")
+        if "exclusiveMinimum" in schema and value <= schema["exclusiveMinimum"]:
+            out.append(f"{path}: {value} is not above {schema['exclusiveMinimum']}")
+        if "exclusiveMaximum" in schema and value >= schema["exclusiveMaximum"]:
+            out.append(f"{path}: {value} is not below {schema['exclusiveMaximum']}")
+        if "multipleOf" in schema:
+            quotient = value / schema["multipleOf"]
+            if not float(quotient).is_integer():
+                out.append(f"{path}: {value} is not a multiple of {schema['multipleOf']}")
+        return out
+
+    def _array(self, value: list, schema: dict, path: str) -> list[str]:
+        out: list[str] = []
+        prefix = schema.get("prefixItems") or []
+        for index, item in enumerate(value):
+            if index < len(prefix):
+                out += self._errors(item, prefix[index], f"{path}[{index}]")
+            elif "items" in schema:
+                out += self._errors(item, schema["items"], f"{path}[{index}]")
+        if "minItems" in schema and len(value) < schema["minItems"]:
+            out.append(f"{path}: has {len(value)} items, minItems is {schema['minItems']}")
+        if "maxItems" in schema and len(value) > schema["maxItems"]:
+            out.append(f"{path}: has {len(value)} items, maxItems is {schema['maxItems']}")
+        if schema.get("uniqueItems") and len({_canonical(item) for item in value}) != len(value):
+            out.append(f"{path}: items are not unique")
+        if "contains" in schema and not any(
+            not self._errors(item, schema["contains"], path) for item in value
+        ):
+            out.append(f"{path}: no item matches 'contains'")
+        return out
+
+    def _object(self, value: dict, schema: dict, path: str) -> list[str]:
+        out: list[str] = []
+        for name in schema.get("required", ()):
+            if name not in value:
+                out.append(f"{path}: missing required property {name!r}")
+        for name, needed in (schema.get("dependentRequired") or {}).items():
+            if name in value:
+                for other in needed:
+                    if other not in value:
+                        out.append(f"{path}: {name!r} requires {other!r}")
+        if "minProperties" in schema and len(value) < schema["minProperties"]:
+            out.append(
+                f"{path}: has {len(value)} properties, minProperties is {schema['minProperties']}"
+            )
+        if "maxProperties" in schema and len(value) > schema["maxProperties"]:
+            out.append(
+                f"{path}: has {len(value)} properties, maxProperties is {schema['maxProperties']}"
+            )
+
+        properties = schema.get("properties") or {}
+        patterns = schema.get("patternProperties") or {}
+        for name, item in value.items():
+            where = f"{path}.{name}"
+            matched = False
+            if name in properties:
+                out += self._errors(item, properties[name], where)
+                matched = True
+            for pattern, sub in patterns.items():
+                if _compile(pattern, self.name).search(name):
+                    out += self._errors(item, sub, where)
+                    matched = True
+            if not matched and "additionalProperties" in schema:
+                out += self._errors(item, schema["additionalProperties"], where)
+            if "propertyNames" in schema:
+                out += self._errors(name, schema["propertyNames"], f"{path}: key {name!r}")
+        return out
+
+
+def _typename(value: Any) -> str:
+    for name, check in _TYPE_CHECKS.items():
+        if name != "integer" and check(value):
+            return name
+    return type(value).__name__
+
+
+def load(path: str) -> Validator:
+    """Read a schema document from disk and prepare it for evaluation."""
+    try:
+        with open(path, encoding="utf-8") as handle:
+            document = json.load(handle)
+    except (OSError, json.JSONDecodeError) as exc:
+        raise SchemaError(f"cannot read schema {path!r}: {exc}") from exc
+    return Validator(document, name=path)

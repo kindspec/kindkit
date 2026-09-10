@@ -26,7 +26,10 @@ same cases.
                       notice. A surviving mutant is a failure, and so is a
                       STALE one whose pattern no longer matches the source
     the convention    a case is a directory of real files plus one expect.json,
-                      openable in any tool and diffable
+                      openable in any tool and diffable. Written down in
+                      `case-tree/` -- CASE-TREE.md and expect.schema.json,
+                      CC0 and standing alone, so a tree can be consumed
+                      without reading Python
     the workflow      the portable enforcement point
 
 ## What does NOT go in it
@@ -177,7 +180,10 @@ ends with a mixture of correct and silently wrong verdicts. Measured, on a
 probe doing nothing more exotic than `spec_from_file_location`: exit 0 over a
 mutant the suite provably detects. The kit purges
 `<scratch dir>/__pycache__/<stem>.*.pyc` on each write; anything a probe
-copies elsewhere is the probe's own to handle.
+copies elsewhere is the probe's own to handle. A probe that runs its suite in
+a subprocess can remove the whole class rather than the instance by pointing
+`PYTHONPYCACHEPREFIX` at a fresh directory per run, which is what this
+repository's own gate does with `tools/mutation_gate.py`.
 
 ## The standard this has to meet
 
@@ -199,6 +205,23 @@ been reached once in this project's history, correctly.
 
 Read the org contract:
 [kindspec/.github/AGENTS.md](https://github.com/kindspec/.github/blob/main/AGENTS.md).
+
+## The case-tree convention
+
+`case-tree/` is the whole of it, and depends on nothing here:
+
+    CASE-TREE.md          the normative rules -- a case is a directory of real
+                          files plus one expect.json; fixtures are exact bytes;
+                          a case must be able to fail
+    expect.schema.json    the ENVELOPE of expect.json, and only the envelope.
+                          `kind` is required and is the one key a runner reads;
+                          the rest of the object is the kind's own vocabulary
+
+A kind that wants its case bodies checked drops a `case-body.schema.json` at
+its fixture root; a validator applies it alongside the envelope, and the kit
+never learns what is in it.
+
+    just cases <root>...      validate a tree (stdlib only, exit 0/1/2)
 
 ## Licensing
 

@@ -35,6 +35,12 @@ test:
 mutants:
     uv run python tools/mutation_gate.py
 
+# Validate a case tree against case-tree/expect.schema.json. Stdlib only, so
+# it runs anywhere the tree can be copied to. NOT wired into `check`: the CI
+# gate is owned elsewhere -- see kindspec/kindkit#4.
+cases +ROOTS='tests/fixtures/kv':
+    uv run python tools/validate_case_tree.py {{ROOTS}}
+
 # Remove build artifacts
 clean:
     rm -rf .pytest_cache .ruff_cache dist build **/__pycache__
