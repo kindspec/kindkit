@@ -26,3 +26,16 @@ indent_style = tab
 [justfile]
 indent_style = space
 indent_size = 4
+
+# Conformance fixtures assert on EXACT BYTES. .gitattributes and
+# .pre-commit-config.yaml both carve this tree out; an editor honouring
+# editorconfig would otherwise rewrite a fixture on save and destroy the case
+# that tests line-ending preservation. Every rule that could touch content is
+# unset here, not merely the whitespace ones.
+[tests/fixtures/**]
+charset = unset
+end_of_line = unset
+insert_final_newline = unset
+trim_trailing_whitespace = unset
+indent_style = unset
+indent_size = unset

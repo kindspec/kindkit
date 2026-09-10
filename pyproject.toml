@@ -33,6 +33,10 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["kindkit"]
+# `Typing :: Typed` above is a claim, and PEP 561 says the marker file is what
+# makes it true for a consumer's type checker. Without it the classifier is a
+# number nobody produced.
+artifacts = ["kindkit/py.typed"]
 
 # The sdist carries the tests and the toy case tree deliberately. A kit whose
 # defining property is "it can fail" should ship the fixtures that prove it.
@@ -40,6 +44,10 @@ packages = ["kindkit"]
 include = [
   "/kindkit",
   "/tests",
+  # `just mutants` is a recipe the justfile ships, so the script it runs has to
+  # ship too: an unpacked sdist that carries the recipe and not the tool fails
+  # at the one command that proves the suite can fail.
+  "/tools",
   "/README.md",
   "/LICENSE",
   "/LICENSES",
