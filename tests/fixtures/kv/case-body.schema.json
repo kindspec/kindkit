@@ -1,0 +1,43 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$comment": "SPDX-License-Identifier: CC0-1.0",
+  "title": "kv case bodies",
+  "description": "How the toy `kv` tree declares its own case-body shape. The kit never reads this file's contents -- a validator applies it alongside case-tree/expect.schema.json, which knows only that `kind` exists. Note that `merge.then` here is accept|refuse; rowspec's `merge.then` is evaluate|refuse. Same kind name, different vocabulary, and neither tree is wrong: kind names are tree-local.",
+  "allOf": [
+    {
+      "if": { "properties": { "kind": { "const": "byte-identity" } }, "required": ["kind"] },
+      "then": {
+        "properties": { "kind": true },
+        "additionalProperties": false
+      }
+    },
+    {
+      "if": { "properties": { "kind": { "const": "parse" } }, "required": ["kind"] },
+      "then": {
+        "required": ["accept"],
+        "properties": {
+          "kind": true,
+          "accept": { "type": "boolean" },
+          "refusal_contains": { "type": "string" }
+        },
+        "additionalProperties": false
+      }
+    },
+    {
+      "if": { "properties": { "kind": { "const": "merge" } }, "required": ["kind"] },
+      "then": {
+        "required": ["git_outcome", "then"],
+        "properties": {
+          "kind": true,
+          "git_outcome": { "enum": ["clean", "conflict"] },
+          "then": { "enum": ["accept", "refuse"] }
+        },
+        "additionalProperties": false
+      }
+    },
+    {
+      "$comment": "A kind nobody declared must be rejected here, not skipped. A tree that quietly accepts an unknown kind is a tree whose declaration stopped covering it.",
+      "properties": { "kind": { "enum": ["byte-identity", "parse", "merge"] } }
+    }
+  ]
+}

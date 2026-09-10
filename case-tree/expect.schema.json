@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://kindspec.github.io/kindkit/case-tree/expect.schema.json",
+  "$comment": "SPDX-License-Identifier: CC0-1.0",
+  "title": "expect.json",
+  "description": "The manifest that makes a directory a conformance case. This schema describes the ENVELOPE only -- the part every kind shares and a runner relies on. The body of the manifest is the kind's own vocabulary and is deliberately unconstrained here; a kind that wants its body checked supplies case-body.schema.json at its fixture root. See CASE-TREE.md.",
+  "type": "object",
+  "required": ["kind"],
+  "properties": {
+    "kind": {
+      "$comment": "The one key a runner reads. It selects the handler that asserts the case, and it is authoritative: the parent directory name is a filing convention, not an input. Kind names are tree-local, not globally registered -- two trees may both use 'merge' and mean different bodies by it.",
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$"
+    }
+  },
+  "additionalProperties": true,
+  "propertyNames": {
+    "$comment": "The only constraint the envelope places on the case body: keys are lower snake_case. This is a naming convention, not vocabulary -- it says nothing about WHICH keys a kind may use, only how they are spelled, so a tree stays greppable across kinds.",
+    "pattern": "^[a-z][a-z0-9_]*$"
+  }
+}
