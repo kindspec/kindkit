@@ -435,6 +435,10 @@ class GateReport:
 
     @property
     def ok(self) -> bool:
+        if not self.killed:
+            # Every mutant excused or unmeasured. `0 killed` is the same
+            # finding as `no mutants at all`, arrived at one step later.
+            return False
         return not (self.survived or self.stale or self.bogus or self.broken)
 
     def summary(self) -> str:
@@ -574,6 +578,10 @@ def gate(
         baseline,
     )
     report(f"\n{result.summary()}")
+    if not killed:
+        report("\n  NOTHING WAS KILLED. Every mutant was excused or went unmeasured, so")
+        report("  this run says nothing about the suite: it is a gate with no mutants,")
+        report("  reached one step later.")
     if stale:
         report("\n  A STALE MUTANT MEASURES NOTHING. The pattern no longer applies, so")
         report("  the gate went quiet without failing -- the exact silent degradation")

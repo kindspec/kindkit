@@ -489,6 +489,13 @@ MUTATIONS: tuple[Mutation, ...] = (
         (T_MUT + "test_a_scratch_path_that_is_the_source_is_refused",),
     ),
     Mutation(
+        "a run that killed nothing reports a pass",
+        MUTATION,
+        "        if not self.killed:\n            return False",
+        "        if False:\n            return False",
+        (T_MUT + "test_a_run_that_killed_nothing_measured_nothing",),
+    ),
+    Mutation(
         "the gate reaches outside the standard library",
         MUTATION,
         "import ast\nimport glob",

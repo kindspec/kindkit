@@ -75,6 +75,14 @@ def kv_probe(path: str) -> Verdict:
     return Verdict({failure.split(": ", 1)[0] for failure in report.failures})
 
 
+#: A mutant the kv tree reliably kills. Paired with the mutant under test
+#: wherever a test asserts `not report.ok`: a run that kills NOTHING already
+#: fails on that ground alone, which would mask the term being checked. The
+#: kit's own gate found this masking the moment the floor was added.
+def killer() -> Mutant:
+    return Mutant("refuses-no-equals", *REFUSES_NO_EQUALS)
+
+
 def run_gate(mutants, *, probe=kv_probe, source=KVKIND, scratch=None, tmp_path=None, **kw):
     if scratch is None:
         scratch = str(tmp_path / "kv_under_test.py")
@@ -94,9 +102,9 @@ def test_a_mutant_the_suite_catches_is_killed(tmp_path):
 
 
 def test_a_mutant_nothing_detects_survives_and_fails_the_run(tmp_path):
-    report = run_gate([Mutant("nothing-reads-raw", *INERT)], tmp_path=tmp_path)
+    report = run_gate([Mutant("nothing-reads-raw", *INERT), killer()], tmp_path=tmp_path)
     assert report.survived == ("nothing-reads-raw",)
-    assert report.killed == ()
+    assert report.killed == ("refuses-no-equals",)
     assert not report.ok
 
 
@@ -127,16 +135,18 @@ def test_a_kill_is_a_case_that_fails_ONLY_under_the_mutant(tmp_path):
 
 def test_a_pattern_that_matches_nothing_is_stale_and_fails(tmp_path):
     report = run_gate(
-        [Mutant("gone", "if int(nothing_here_any_more):", "if False:")], tmp_path=tmp_path
+        [Mutant("gone", "if int(nothing_here_any_more):", "if False:"), killer()],
+        tmp_path=tmp_path,
     )
     assert [name for name, _ in report.stale] == ["gone"]
-    assert report.killed == () and report.survived == ()
+    assert report.killed == ("refuses-no-equals",) and report.survived == ()
     assert not report.ok, "a stale mutant measured nothing, so the run must not be green"
 
 
 def test_an_ambiguous_pattern_is_stale_rather_than_landing_somewhere(tmp_path):
     report = run_gate(
-        [Mutant("ambiguous", "Malformed = Malformed", "Malformed = None")], tmp_path=tmp_path
+        [Mutant("ambiguous", "Malformed = Malformed", "Malformed = None"), killer()],
+        tmp_path=tmp_path,
     )
     assert [name for name, _ in report.stale] == ["ambiguous"]
     assert "AMBIGUOUS" in report.stale[0][1]
@@ -145,7 +155,8 @@ def test_an_ambiguous_pattern_is_stale_rather_than_landing_somewhere(tmp_path):
 
 def test_a_replacement_that_changes_nothing_is_stale(tmp_path):
     report = run_gate(
-        [Mutant("no-op", 'if "=" not in line:', 'if "=" not in line:')], tmp_path=tmp_path
+        [Mutant("no-op", 'if "=" not in line:', 'if "=" not in line:'), killer()],
+        tmp_path=tmp_path,
     )
     assert [name for name, _ in report.stale] == ["no-op"]
     assert not report.ok
@@ -153,7 +164,8 @@ def test_a_replacement_that_changes_nothing_is_stale(tmp_path):
 
 def test_a_mutation_that_does_not_parse_is_stale_not_a_wrong_patch(tmp_path):
     report = run_gate(
-        [Mutant("unparseable", 'if "=" not in line:', "if if if:")], tmp_path=tmp_path
+        [Mutant("unparseable", 'if "=" not in line:', "if if if:"), killer()],
+        tmp_path=tmp_path,
     )
     assert [name for name, _ in report.stale] == ["unparseable"]
     assert not report.ok
@@ -248,9 +260,9 @@ def test_a_mutant_that_leaves_the_suite_with_no_verdict_is_broken_not_killed(tmp
     the failing set); no mutant currently triggers it, which is the only reason
     the number is right.
     """
-    report = run_gate([Mutant("unimportable", *UNIMPORTABLE)], tmp_path=tmp_path)
+    report = run_gate([Mutant("unimportable", *UNIMPORTABLE), killer()], tmp_path=tmp_path)
     assert [name for name, _ in report.broken] == ["unimportable"]
-    assert report.killed == ()
+    assert report.killed == ("refuses-no-equals",)
     assert not report.ok
 
 
@@ -389,21 +401,44 @@ def test_an_implementation_that_changes_under_the_gate_is_a_hard_failure(tmp_pat
 
 def test_an_equivalent_mutant_is_reported_separately_and_does_not_fail_the_run(tmp_path):
     report = run_gate(
-        [Mutant("nothing-reads-raw", *INERT, equivalent="the probe never constructs Raw")],
+        [
+            Mutant("nothing-reads-raw", *INERT, equivalent="the probe never constructs Raw"),
+            Mutant("refuses-no-equals", *REFUSES_NO_EQUALS),
+        ],
         tmp_path=tmp_path,
     )
     assert report.equivalent == ("nothing-reads-raw",)
-    assert report.survived == () and report.killed == ()
+    assert report.survived == ()
     assert report.ok
+
+
+def test_a_run_that_killed_nothing_measured_nothing(tmp_path):
+    """`0 killed` is `a gate with no mutants`, reached one step later.
+
+    Every mutant excused by a claim the suite cannot refute leaves a run that
+    is green and says nothing -- the shape a wrongly-scored mutant hides in.
+    """
+    report = run_gate(
+        [Mutant("nothing-reads-raw", *INERT, equivalent="the probe never constructs Raw")],
+        tmp_path=tmp_path,
+    )
+    assert report.killed == ()
+    assert report.equivalent == ("nothing-reads-raw",)
+    assert not report.ok
 
 
 def test_an_equivalence_claim_the_suite_refutes_is_a_false_claim(tmp_path):
     report = run_gate(
-        [Mutant("refuses-no-equals", *REFUSES_NO_EQUALS, equivalent="nothing can see this")],
+        [
+            Mutant("claimed-inert", *REFUSES_NO_EQUALS, equivalent="nothing can see this"),
+            Mutant("also-inert", *INERT, equivalent="the probe never constructs Raw"),
+            killer(),
+        ],
         tmp_path=tmp_path,
     )
-    assert [name for name, _ in report.bogus] == ["refuses-no-equals"]
-    assert report.equivalent == ()
+    assert [name for name, _ in report.bogus] == ["claimed-inert"]
+    assert report.equivalent == ("also-inert",)
+    assert report.killed == ("refuses-no-equals",)
     assert not report.ok
 
 

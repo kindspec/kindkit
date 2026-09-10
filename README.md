@@ -144,7 +144,9 @@ non-zero pytest exit as "caught" counts an unimportable module as a kill.
 
 `source` is never written to. Both paths must be absolute, and both are
 hashed: the implementation across the whole run, the scratch file across each
-probe, so a verdict is always known to describe the bytes the gate chose.
+probe, so a verdict is always known to describe the bytes the gate chose. A
+run that killed **nothing** fails too: every mutant excused or unmeasured is a
+gate with no mutants, reached one step later.
 
 ### What a probe has to get right
 
