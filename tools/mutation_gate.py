@@ -18,6 +18,19 @@ all of which this project has hit:
 So every mutation is hashed before and after. An unchanged hash prints BROKEN
 and fails the run -- never a pass -- and the original bytes are restored and
 re-hashed at the end of each round.
+
+Patterns are spliced by `kindkit.mutation.apply_mutant`, the same matcher a
+KIND uses to break its own implementation. The two gates are otherwise
+different things -- this one mutates the kit and runs pytest; that one mutates
+a kind's implementation and runs a fixture tree -- but they share the one part
+that has already failed in the field: matching on bytes, which `ruff format`
+disarms in silence. Measured on rowspec's 76 mutants, reformatting its
+reference at line-length 120 with single quotes leaves 48 of them without a
+byte match and 0 without a token match.
+
+The matcher is imported BEFORE anything is mutated, so a round that mutates
+`kindkit/mutation.py` still splices with the unmutated matcher held in memory
+-- the child pytest process is the one that sees the defect.
 """
 
 from __future__ import annotations
@@ -29,6 +42,10 @@ import sys
 from dataclasses import dataclass
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+sys.path.insert(0, ROOT)
+
+from kindkit.mutation import MutantError, apply_mutant  # noqa: E402 -- needs ROOT on the path
 
 
 @dataclass(frozen=True)
@@ -274,6 +291,11 @@ MUTATIONS: tuple[Mutation, ...] = (
     Mutation(
         "a stale mutant stops failing the run",
         MUTATION,
+        # Anchored INSIDE the parentheses. `ruff format` wraps a long condition
+        # in parens the token stream deliberately does not see, so a pattern
+        # that spans them splices unbalanced source -- the one documented gap
+        # in the matcher. It is loud rather than wrong, and a pattern that does
+        # not reach for them has no gap to fall into.
         "self.survived or self.stale or self.bogus",
         "self.survived or self.bogus",
         (
@@ -490,19 +512,22 @@ def run_tests(tests: tuple[str, ...]) -> int:
     return proc.returncode
 
 
-def apply(mutation: Mutation) -> tuple[str, str, str, bool]:
-    """Return (before_hash, after_hash, original_text, applied)."""
+def apply(mutation: Mutation) -> tuple[str, str, str, str | None]:
+    """Return (before_hash, after_hash, original_text, why_it_did_not_apply)."""
     path = os.path.join(ROOT, mutation.path)
     before = sha(path)
     with open(path, encoding="utf-8", newline="") as handle:
         original = handle.read()
-    occurrences = original.count(mutation.find)
-    if occurrences != 1:
-        return before, before, original, False
+    try:
+        mutated = apply_mutant(original, mutation.find, mutation.replace)
+    except MutantError as exc:
+        return before, before, original, str(exc)
     with open(path, "w", encoding="utf-8", newline="") as handle:
-        handle.write(original.replace(mutation.find, mutation.replace))
+        handle.write(mutated)
     after = sha(path)
-    return before, after, original, after != before
+    # `apply_mutant` refuses a no-op splice, so an unchanged hash here means
+    # the WRITE did not take, which the return value could not otherwise say.
+    return before, after, original, None if after != before else "the write did not land"
 
 
 def restore(mutation: Mutation, original: str) -> str:
@@ -518,14 +543,14 @@ def main() -> int:
     broken = survived = 0
 
     for mutation in MUTATIONS:
-        before, after, original, applied = apply(mutation)
+        before, after, original, unapplied = apply(mutation)
         try:
-            if not applied:
+            if unapplied is not None:
                 # The failure this whole file exists to make visible: a mutation
                 # that never landed is indistinguishable from one the suite
                 # survived, unless it is reported as neither.
                 verdict = "BROKEN"
-                detail = f"pattern matched {original.count(mutation.find)} times, expected 1"
+                detail = unapplied
                 broken += 1
             else:
                 code = run_tests(mutation.tests)
