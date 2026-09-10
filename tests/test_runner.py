@@ -17,8 +17,9 @@ import pytest
 
 from kindkit import Adapter, Case, FixtureTreeError, cli, discover, run
 
-KV_TREE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fixtures", "kv")
-KV_CASES = 5
+REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+KV_TREE = os.path.join(REPO_ROOT, "tests", "fixtures", "kv")
+KV_CASES = 6
 
 
 def quiet(_message: str) -> None:
@@ -64,11 +65,24 @@ def test_fixtures_are_read_as_exact_bytes(tmp_path):
     assert case.files["input"] == "a=1\r\nb=2\r\n"
 
 
-def test_a_case_is_told_which_directory_its_artifact_lives_in():
-    cases = {case.id: case for case in discover(KV_TREE, (".kv",))}
-    case = cases["roundtrip/a-blank-line-survives"]
+def test_a_case_is_told_which_directory_its_artifact_lives_in(monkeypatch):
+    # Discovered through a RELATIVE root on purpose. Rooted at an absolute path
+    # `os.walk` hands back absolute dirpaths anyway, so the assertion would hold
+    # with the abspath() removed and could never fail.
+    monkeypatch.chdir(REPO_ROOT)
+    cases = {case.id: case for case in discover(os.path.join("tests", "fixtures", "kv"), (".kv",))}
+    case = cases["byte-identity/a-blank-line-survives"]
     assert os.path.isabs(case.dir)
     assert os.path.isfile(os.path.join(case.dir, "input.kv"))
+
+
+def test_the_committed_crlf_fixture_kept_its_crlf():
+    # The fixture tree is exempt from end-of-line normalisation in
+    # .gitattributes. Without a committed CRLF fixture that rule guards nothing,
+    # and this is what notices if a checkout ever rewrites one.
+    path = os.path.join(KV_TREE, "byte-identity", "crlf-survives", "input.kv")
+    with open(path, "rb") as handle:
+        assert handle.read() == b"a=1\r\nb=2\r\n"
 
 
 # --------------------------------------------------------------------------
@@ -220,19 +234,36 @@ def test_an_adapter_must_carry_a_handler():
         Adapter(fixture_suffixes=(".kv",), handlers={})
 
 
-def test_the_runner_imports_nothing_from_any_kind():
-    """The defining property, asserted mechanically rather than by reading."""
-    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+def test_the_runner_imports_nothing_but_the_standard_library():
+    """The defining property, asserted mechanically rather than by reading.
+
+    Stdlib-only, not merely kind-free. A check that only looks for kind names
+    passes an `import pytest` in the runner, which would leave the CI step the
+    sole enforcer of the property -- and a check nobody has watched go red is
+    the thing this repository exists to refuse.
+
+    The DELTA that importing the kit adds, not the whole of `sys.modules`: an
+    interpreter arrives with modules it was started with, and a GitHub runner
+    image injects `sitecustomize` before any of this runs.
+    """
     probe = (
-        "import sys, kindkit, kindkit.runner, kindkit.cli, kindkit.gitmerge; "
-        "print('\\n'.join(sorted(sys.modules)))"
+        "import importlib, sys\n"
+        "before = set(sys.modules)\n"
+        "for n in ('kindkit', 'kindkit.runner', 'kindkit.cli', 'kindkit.gitmerge'):\n"
+        "    importlib.import_module(n)\n"
+        "print('\\n'.join(sorted(set(sys.modules) - before)))\n"
     )
-    env = dict(os.environ, PYTHONPATH=root)
-    loaded = subprocess.run(
+    env = dict(os.environ, PYTHONPATH=REPO_ROOT)
+    added = subprocess.run(
         [sys.executable, "-c", probe], capture_output=True, text=True, check=True, env=env
     ).stdout.split()
-    kinds = ("rowspec", "blockspec", "nodespec", "kvkind")
-    assert not [m for m in loaded if m.split(".")[0] in kinds]
+    leaked = [
+        m
+        for m in added
+        if m.split(".")[0] not in sys.stdlib_module_names and not m.startswith(("kindkit", "_"))
+    ]
+    assert leaked == []
+    assert "kindkit.runner" in added, "the probe imported nothing; it would pass on anything"
 
 
 # --------------------------------------------------------------------------

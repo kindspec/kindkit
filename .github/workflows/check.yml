@@ -38,7 +38,9 @@ jobs:
         run: just mutants
 
       # The kit's defining property, asserted here as well as in the suite, so
-      # that deleting the test does not quietly delete the guarantee.
+      # that deleting the test does not quietly delete the guarantee. The suite
+      # makes the same assertion, and the mutation gate watches THAT one go red
+      # -- this step is the second pair of eyes, not the only pair.
       - name: the kit imports nothing from any kind
         if: always()
         run: |

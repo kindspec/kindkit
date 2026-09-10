@@ -17,7 +17,7 @@ import os
 import shutil
 import subprocess
 import tempfile
-from collections.abc import Mapping, Sequence
+from collections.abc import Sequence
 
 #: What ``merge`` returns as its first element.
 CLEAN = "clean"
@@ -28,11 +28,16 @@ def _git(*args: str, cwd: str | None = None) -> subprocess.CompletedProcess[str]
     return subprocess.run(("git", *args), cwd=cwd, capture_output=True, text=True)
 
 
-def merge(files: Mapping[str, str], order: Sequence[str], filename: str) -> tuple[str, str]:
-    """Merge ``order`` into a repository seeded with ``files["base"]``.
+def merge(base: str, branches: Sequence[str], filename: str) -> tuple[str, str]:
+    """Merge each of ``branches``, in order, into a repository seeded with ``base``.
 
-    ``files`` maps fixture stems to their exact text; ``order`` names the stems
-    to merge, one branch each, in that order. Returns ``(CLEAN, text)`` or
+    Texts, not fixture stems. Which file in a case directory is the merge base
+    and which are the branches is the kind's filing convention, and a kit that
+    reached into a dict for the key ``"base"`` would be enforcing one.
+
+    ``branches`` is ordered and the order is load-bearing: git records the first
+    merged side as `ours`, so two competing edits produce different conflicted
+    text depending on which arrives first. Returns ``(CLEAN, text)`` or
     ``(CONFLICT, text)`` where ``text`` is the working-tree content of
     ``filename`` afterwards -- conflict markers and all, because a reader being
     handed a conflicted file is exactly what some cases assert about.
@@ -56,21 +61,21 @@ def merge(files: Mapping[str, str], order: Sequence[str], filename: str) -> tupl
             _git("config", key, value, cwd=workdir)
 
         path = os.path.join(workdir, filename)
-        _write(path, files["base"])
+        _write(path, base)
         _git("add", "-A", cwd=workdir)
         if _git("commit", "-qm", "b", cwd=workdir).returncode:
             raise RuntimeError("git commit failed: merge cases cannot be run")
         _git("branch", "-M", "main", cwd=workdir)
 
-        for index, name in enumerate(order):
+        for index, text in enumerate(branches):
             _git("checkout", "-q", "main", cwd=workdir)
             _git("checkout", "-qb", f"b{index}", cwd=workdir)
-            _write(path, files[name])
-            if _git("commit", "-qam", name, cwd=workdir).returncode:
-                raise RuntimeError(f"git commit failed on branch {name}")
+            _write(path, text)
+            if _git("commit", "-qam", f"b{index}", cwd=workdir).returncode:
+                raise RuntimeError(f"git commit failed on branch b{index}")
 
         _git("checkout", "-q", "main", cwd=workdir)
-        for index in range(len(order)):
+        for index in range(len(branches)):
             if _git("merge", f"b{index}", "-m", "m", cwd=workdir).returncode:
                 return CONFLICT, _read(path)
         return CLEAN, _read(path)

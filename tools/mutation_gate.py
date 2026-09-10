@@ -26,7 +26,7 @@ import hashlib
 import os
 import subprocess
 import sys
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -40,8 +40,6 @@ class Mutation:
     find: str
     replace: str
     tests: tuple[str, ...]
-    #: Extra files the mutation needs on disk, written and removed with it.
-    extra_files: dict[str, str] = field(default_factory=dict)
 
 
 RUNNER = "kindkit/runner.py"
@@ -132,6 +130,13 @@ MUTATIONS: tuple[Mutation, ...] = (
         ),
     ),
     Mutation(
+        "a case is handed a path relative to wherever the run started",
+        RUNNER,
+        "                os.path.abspath(dirpath),",
+        "                dirpath,",
+        ("tests/test_runner.py::test_a_case_is_told_which_directory_its_artifact_lives_in",),
+    ),
+    Mutation(
         "one fixture silently shadows another",
         RUNNER,
         'raise FixtureTreeError(f"{cid}: two fixtures share the stem {stem!r}")',
@@ -174,12 +179,11 @@ MUTATIONS: tuple[Mutation, ...] = (
         ("tests/test_runner.py::test_an_adapter_must_carry_a_handler",),
     ),
     Mutation(
-        "the runner reaches into a kind",
+        "the runner reaches outside the standard library",
         RUNNER,
         "import json\nimport os",
-        "import json\nimport os\n\nimport rowspec",
-        ("tests/test_runner.py::test_the_runner_imports_nothing_from_any_kind",),
-        extra_files={"rowspec.py": "# a stand-in kind, written by the mutation gate\n"},
+        "import json\nimport os\n\nimport pytest",
+        ("tests/test_runner.py::test_the_runner_imports_nothing_but_the_standard_library",),
     ),
     Mutation(
         "no verdict is reported as a verdict",
@@ -209,17 +213,31 @@ MUTATIONS: tuple[Mutation, ...] = (
         ),
     ),
     Mutation(
-        "the branches come from the directory rather than from the order given",
+        "the order of the branches is collapsed",
         GITMERGE,
-        "        for index, name in enumerate(order):",
-        "        for index, name in enumerate(sorted(files)):",
-        ("tests/test_gitmerge.py::test_a_fixture_not_named_in_the_order_is_not_merged",),
+        "        for index, text in enumerate(branches):",
+        "        for index, text in enumerate(sorted(branches)):",
+        ("tests/test_gitmerge.py::test_the_order_of_the_branches_changes_the_merged_text",),
+    ),
+    Mutation(
+        "the order of the branches is reversed",
+        GITMERGE,
+        "        for index, text in enumerate(branches):",
+        "        for index, text in enumerate(sorted(branches, reverse=True)):",
+        ("tests/test_gitmerge.py::test_the_order_of_the_branches_changes_the_merged_text",),
+    ),
+    Mutation(
+        "a branch nobody asked for is merged",
+        GITMERGE,
+        "        for index in range(len(branches)):",
+        "        for index in range(len(branches) + 1):",
+        ("tests/test_gitmerge.py::test_a_text_not_named_as_a_branch_is_not_merged",),
     ),
     Mutation(
         "the last branch is never merged",
         GITMERGE,
-        "        for index in range(len(order)):",
-        "        for index in range(len(order) - 1):",
+        "        for index in range(len(branches)):",
+        "        for index in range(len(branches) - 1):",
         (
             "tests/test_gitmerge.py::test_disjoint_edits_merge_clean",
             "tests/test_runner.py::test_a_conforming_implementation_passes_every_case",
@@ -244,15 +262,27 @@ def sha(path: str) -> str:
         return hashlib.sha256(handle.read()).hexdigest()[:12]
 
 
-def run_tests(tests: tuple[str, ...]) -> bool:
-    """True if pytest went red, which is what a mutation is supposed to cause."""
+#: pytest's own exit codes. 1 is "tests ran and some failed"; everything else
+#: non-zero means the tests did not run to a verdict at all.
+PYTEST_PASSED = 0
+PYTEST_FAILED = 1
+
+
+def run_tests(tests: tuple[str, ...]) -> int:
+    """Return pytest's exit code. Only 1 means the mutation was actually caught.
+
+    Not `returncode != 0`. A mutation that makes the module unimportable exits
+    2 on a collection error, which looks identical to a caught mutation while
+    the tests never ran -- the third shape of self-disarming sweep, and the one
+    the hash check does not cover.
+    """
     proc = subprocess.run(
         [sys.executable, "-m", "pytest", "-q", "-p", "no:randomly", *tests],
         cwd=ROOT,
         capture_output=True,
         text=True,
     )
-    return proc.returncode != 0
+    return proc.returncode
 
 
 def apply(mutation: Mutation) -> tuple[str, str, str, bool]:
@@ -266,9 +296,6 @@ def apply(mutation: Mutation) -> tuple[str, str, str, bool]:
         return before, before, original, False
     with open(path, "w", encoding="utf-8", newline="") as handle:
         handle.write(original.replace(mutation.find, mutation.replace))
-    for name, text in mutation.extra_files.items():
-        with open(os.path.join(ROOT, name), "w", encoding="utf-8") as handle:
-            handle.write(text)
     after = sha(path)
     return before, after, original, after != before
 
@@ -277,10 +304,6 @@ def restore(mutation: Mutation, original: str) -> str:
     path = os.path.join(ROOT, mutation.path)
     with open(path, "w", encoding="utf-8", newline="") as handle:
         handle.write(original)
-    for name in mutation.extra_files:
-        target = os.path.join(ROOT, name)
-        if os.path.exists(target):
-            os.remove(target)
     return sha(path)
 
 
@@ -299,13 +322,19 @@ def main() -> int:
                 verdict = "BROKEN"
                 detail = f"pattern matched {original.count(mutation.find)} times, expected 1"
                 broken += 1
-            elif run_tests(mutation.tests):
-                verdict = "caught"
-                detail = f"{before} -> {after}"
             else:
-                verdict = "SURVIVED"
-                detail = f"{before} -> {after}; the tests stayed green"
-                survived += 1
+                code = run_tests(mutation.tests)
+                if code == PYTEST_FAILED:
+                    verdict = "caught"
+                    detail = f"{before} -> {after}"
+                elif code == PYTEST_PASSED:
+                    verdict = "SURVIVED"
+                    detail = f"{before} -> {after}; the tests stayed green"
+                    survived += 1
+                else:
+                    verdict = "BROKEN"
+                    detail = f"{before} -> {after}; pytest exited {code}, so nothing ran"
+                    broken += 1
         finally:
             restored = restore(mutation, original)
         if restored != before:

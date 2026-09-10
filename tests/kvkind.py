@@ -78,14 +78,17 @@ def adapter(impl: type[Good] | type[Raw]) -> Adapter:
         elif refusal is None or case.expect["refusal_contains"] not in refusal:
             yield f"expected refusal ~{case.expect['refusal_contains']!r}, got {refusal!r}"
 
-    def roundtrip(case: Case) -> Iterator[str]:
+    def byte_identity(case: Case) -> Iterator[str]:
         text = case.files["input"]
         out = impl.render(impl.structure(text))
         if out != text:
             yield f"{len(text)}B in, {len(out)}B out"
 
     def merge(case: Case) -> Iterator[str]:
-        outcome, merged = gitmerge.merge(case.files, ["ours", "theirs"], MERGE_FILENAME)
+        # `mine`/`yours`, not `ours`/`theirs`: which stems a case directory uses
+        # is the kind's filing convention, and the kit must not know either set.
+        branches = [case.files["mine"], case.files["yours"]]
+        outcome, merged = gitmerge.merge(case.files["base"], branches, MERGE_FILENAME)
         if outcome != case.expect["git_outcome"]:
             yield f"git said {outcome}, expected {case.expect['git_outcome']}"
             return
@@ -100,5 +103,8 @@ def adapter(impl: type[Good] | type[Raw]) -> Adapter:
 
     return Adapter(
         fixture_suffixes=(FIXTURE_SUFFIX,),
-        handlers={"parse": parse, "roundtrip": roundtrip, "merge": merge},
+        # `byte-identity` rather than `roundtrip`: rowspec has no handler by that
+        # name, so the kit is not being exercised only against names it was
+        # extracted from.
+        handlers={"parse": parse, "byte-identity": byte_identity, "merge": merge},
     )
