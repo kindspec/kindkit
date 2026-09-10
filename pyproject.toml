@@ -1,0 +1,64 @@
+[project]
+name = "kindkit"
+version = "0.1.0"
+description = "The shared conformance machinery behind every kindspec kind"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = []
+authors = [{ name = "Cameron Brooks", email = "cambrooks3393@gmail.com" }]
+keywords = ["conformance", "fixtures", "git", "merge", "specification", "testing"]
+# The WHEEL contains only `kindkit`, which is MIT. The repository as a whole is
+# licensed per directory -- the case-tree conventions and schemas are CC0-1.0 --
+# and that split is deliberate: a case tree and the schema describing it must be
+# vendorable into an implementation in any language, under any licence, with no
+# obligation attached. See LICENSE and LICENSES/.
+license = "MIT"
+license-files = ["LICENSE", "LICENSES/*.txt"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Intended Audience :: Developers",
+  "Programming Language :: Python :: 3",
+  "Topic :: Software Development :: Testing",
+  "Typing :: Typed",
+]
+
+[project.urls]
+Homepage = "https://github.com/kindspec/kindkit"
+Source = "https://github.com/kindspec/kindkit"
+Issues = "https://github.com/kindspec/kindkit/issues"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["kindkit"]
+
+# The sdist carries the tests and the toy case tree deliberately. A kit whose
+# defining property is "it can fail" should ship the fixtures that prove it.
+[tool.hatch.build.targets.sdist]
+include = [
+  "/kindkit",
+  "/tests",
+  "/README.md",
+  "/LICENSE",
+  "/LICENSES",
+  "/justfile",
+  "/pyproject.toml",
+]
+
+[dependency-groups]
+dev = ["pytest>=8", "ruff>=0.6"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# `tests` is on the path so the toy kind imports as `kvkind`. The kit itself is
+# imported from the repository root and never reaches for anything under here.
+pythonpath = [".", "tests"]

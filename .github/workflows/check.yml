@@ -1,0 +1,58 @@
+name: check
+on: [push, pull_request]
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      # Pinned to commits, not tags. A tag can be re-pointed under us, and a
+      # `vN` tag is not guaranteed to exist at all: `astral-sh/setup-uv@v10`
+      # was a real RELEASE with no moving `v10` behind it, and a job elsewhere
+      # in this org died at `Unable to resolve action` before running anything.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+
+      # `just` is not on the runner image. Without this the job dies at its
+      # first command with exit 127 -- and a job that fails before its checks
+      # is indistinguishable, from the outside, from one whose checks fail.
+      - name: install just
+        run: |
+          uv tool install rust-just
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+      - name: just is actually on PATH
+        run: just --version
+
+      # Each gate reports independently. A failing `check` must not hide
+      # whether the tests and the mutation gate ran at all.
+      - name: lint and format
+        if: always()
+        run: just check
+      - name: tests
+        if: always()
+        run: just test
+      - name: the suite must be able to fail
+        if: always()
+        run: just mutants
+
+      # The kit's defining property, asserted here as well as in the suite, so
+      # that deleting the test does not quietly delete the guarantee.
+      - name: the kit imports nothing from any kind
+        if: always()
+        run: |
+          uv run python - <<'PY'
+          import sys
+          import kindkit, kindkit.cli, kindkit.gitmerge, kindkit.runner  # noqa: F401
+
+          leaked = sorted(
+              m for m in sys.modules
+              if m.split(".")[0] not in sys.stdlib_module_names
+              and not m.startswith(("kindkit", "_"))
+          )
+          if leaked:
+              print(f"::error::the kit pulled in {leaked}")
+              sys.exit(1)
+          print("the kit imports the standard library and nothing else")
+          PY

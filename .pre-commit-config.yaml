@@ -1,0 +1,24 @@
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      # Fixtures assert on EXACT BYTES. A whitespace hook that "tidies" one
+      # destroys the case, so the case trees are excluded from both.
+      - id: trailing-whitespace
+        exclude: ^tests/fixtures/
+      - id: end-of-file-fixer
+        exclude: ^tests/fixtures/
+      - id: check-yaml
+      - id: check-added-large-files
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: v8.21.2
+    hooks:
+      - id: gitleaks
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.8.4
+    hooks:
+      # No --fix. An autofix that rewrites source during a commit once deleted a
+      # safety check in this org's repositories, taking the evidence that it was
+      # never wired up with it. The hook reports; the author fixes.
+      - id: ruff
+      - id: ruff-format
