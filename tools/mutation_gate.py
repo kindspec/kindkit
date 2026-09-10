@@ -26,6 +26,7 @@ import hashlib
 import os
 import subprocess
 import sys
+import tempfile
 from dataclasses import dataclass
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -275,13 +276,27 @@ def run_tests(tests: tuple[str, ...]) -> int:
     2 on a collection error, which looks identical to a caught mutation while
     the tests never ran -- the third shape of self-disarming sweep, and the one
     the hash check does not cover.
+
+    Each run compiles into a FRESH bytecode cache. A fourth shape, found by
+    this gate reporting a mutation as SURVIVED that goes red on its own: CPython
+    invalidates a `.pyc` on (source mtime in WHOLE SECONDS, source size), and
+    two mutations to one file can land in the same second at the same size --
+    two `if <cond>:` -> `if False:` edits whose conditions happen to be the same
+    length do exactly that. The second then runs against the first one's
+    bytecode. The hash
+    check cannot see this, because the file on disk really did change; what did
+    not change is what the interpreter executed. An empty cache per run removes
+    the class rather than this instance of it, and would otherwise be free to
+    mistake one mutation's verdict for another's.
     """
-    proc = subprocess.run(
-        [sys.executable, "-m", "pytest", "-q", "-p", "no:randomly", *tests],
-        cwd=ROOT,
-        capture_output=True,
-        text=True,
-    )
+    with tempfile.TemporaryDirectory() as cache:
+        proc = subprocess.run(
+            [sys.executable, "-m", "pytest", "-q", "-p", "no:randomly", *tests],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            env={**os.environ, "PYTHONPYCACHEPREFIX": cache},
+        )
     return proc.returncode
 
 
