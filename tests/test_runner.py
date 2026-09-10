@@ -126,6 +126,27 @@ def test_an_unreadable_manifest_is_a_hard_failure_not_a_diluted_percentage(tmp_p
         discover(tmp_path, (".kv",))
 
 
+def test_a_non_string_kind_is_a_hard_failure(tmp_path):
+    # Not a case failure. An unhashable `kind` reaches `handlers.get()` as a
+    # TypeError that escapes the run: every later case goes unopened and the
+    # process exits 1, which the CLI documents as "a case failed".
+    case_dir = tmp_path / "unhashable"
+    case_dir.mkdir()
+    (case_dir / "expect.json").write_text('{"kind": ["parse"]}')
+    (case_dir / "input.kv").write_text("a=1")
+    with pytest.raises(FixtureTreeError, match="non-string 'kind'"):
+        discover(tmp_path, (".kv",))
+
+
+def test_a_non_string_kind_does_not_strand_the_cases_after_it(tmp_path):
+    (tmp_path / "aaa").mkdir()
+    (tmp_path / "aaa" / "expect.json").write_text('{"kind": {"parse": 1}}')
+    (tmp_path / "zzz").mkdir()
+    (tmp_path / "zzz" / "expect.json").write_text('{"kind": "parse", "accept": true}')
+    (tmp_path / "zzz" / "input.kv").write_text("a=1\n")
+    assert cli.main(kvkind.adapter(kvkind.Good), [str(tmp_path)]) == cli.EXIT_NO_VERDICT
+
+
 def test_two_fixtures_sharing_a_stem_is_a_hard_failure(tmp_path):
     case_dir = tmp_path / "shadowed"
     case_dir.mkdir()

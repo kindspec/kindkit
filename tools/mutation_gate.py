@@ -122,6 +122,16 @@ MUTATIONS: tuple[Mutation, ...] = (
         ),
     ),
     Mutation(
+        "a non-string kind reaches the handler map and escapes the run",
+        RUNNER,
+        'if "kind" in expect and not isinstance(expect["kind"], str):',
+        "if False:",
+        (
+            "tests/test_runner.py::test_a_non_string_kind_is_a_hard_failure",
+            "tests/test_runner.py::test_a_non_string_kind_does_not_strand_the_cases_after_it",
+        ),
+    ),
+    Mutation(
         "one fixture silently shadows another",
         RUNNER,
         'raise FixtureTreeError(f"{cid}: two fixtures share the stem {stem!r}")',

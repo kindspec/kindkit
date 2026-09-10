@@ -160,6 +160,15 @@ def _read_expect(dirpath: str, cid: str) -> Mapping[str, object]:
         raise FixtureTreeError(f"{cid}: cannot read {CASE_MANIFEST}: {exc}") from exc
     if not isinstance(expect, dict):
         raise FixtureTreeError(f"{cid}: {CASE_MANIFEST} is not a JSON object")
+    if "kind" in expect and not isinstance(expect["kind"], str):
+        # Screened here rather than at dispatch, because an unhashable `kind`
+        # reaches `handlers.get()` as a TypeError that escapes the run: every
+        # later case goes unopened and the process exits 1, which cli.py
+        # documents as "a case failed". That is the exact conflation this
+        # module exists to prevent, so it is a tree fault like the others.
+        raise FixtureTreeError(
+            f"{cid}: {CASE_MANIFEST} names a non-string 'kind': {expect['kind']!r}"
+        )
     return expect
 
 
