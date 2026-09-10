@@ -19,14 +19,18 @@ Deliberate limitations, stated rather than hidden:
 * `$ref` resolves only within the document (`#`, `#/$defs/name`). There is no
   remote resolution and no `$dynamicRef`. A case-body schema is applied
   alongside the envelope rather than `$ref`-ing it, so nothing needs it.
-* `pattern` and `patternProperties` are compiled with Python `re`, not
-  ECMA-262. The two agree on the character classes and anchors a case tree
-  uses; they diverge on constructs no such schema has needed.
+* `pattern` and `patternProperties` are ECMA-262 regexes, per the draft, and
+  Python `re` is NOT a drop-in for one. Two divergences bite a case tree and
+  are translated here rather than waved at -- see `_ecma`. Everything else is
+  Python `re` as written, so a pattern using a construct the two spell
+  differently means one thing here and another in a real validator. Keep the
+  patterns in a vendored schema boring.
 * `format` is not implemented, and is therefore rejected rather than ignored.
 """
 
 from __future__ import annotations
 
+import functools
 import json
 import re
 from typing import Any
@@ -135,9 +139,55 @@ def _equal(a: Any, b: Any) -> bool:
     return _canonical(a) == _canonical(b)
 
 
+def _ecma(pattern: str) -> str:
+    r"""Translate the two ECMA-262/Python divergences that reach a case tree.
+
+    `$` is the one that bites. ECMA-262 without the `m` flag anchors `$` at the
+    very end of the string; Python's `$` also matches just BEFORE a trailing
+    newline. Every anchored pattern in a shipped schema therefore admits a
+    trailing `\n` it did not mean to. `{"kind": "merge\n"}` passed
+    `^[a-z0-9]+(-[a-z0-9]+)*$` here while `kindkit/runner.py` rejected the same
+    manifest with `unknown kind 'merge\n'` -- a constraint that could not fail
+    on the one input that mattered. Python's `\Z` is exactly ECMA's `$`, so a
+    bare `$` outside a character class becomes `\Z`.
+
+    `^` needs no translation: without `re.MULTILINE` it is `\A` already.
+
+    The schema keeps `$`, because `\Z` is not ECMA-262 syntax and the schema is
+    the half that gets vendored into a JavaScript or Go validator. The
+    translation belongs to this evaluator, not to the file it reads.
+    """
+    out: list[str] = []
+    escaped = False
+    in_class = False
+    for char in pattern:
+        if escaped:
+            out.append(char)
+            escaped = False
+            continue
+        if char == "\\":
+            out.append(char)
+            escaped = True
+            continue
+        if in_class:
+            in_class = char != "]"
+            out.append(char)
+            continue
+        if char == "[":
+            in_class = True
+            out.append(char)
+            continue
+        out.append(r"\Z" if char == "$" else char)
+    return "".join(out)
+
+
+@functools.cache
 def _compile(pattern: str, where: str) -> re.Pattern[str]:
     try:
-        return re.compile(pattern)
+        # re.ASCII is the second divergence: Python's `\d`, `\w`, `\s` and `\b`
+        # are Unicode-aware, ECMA-262's are ASCII-only even under `u`. Without
+        # the flag `\d` here matches U+0663 and does not in a browser.
+        return re.compile(_ecma(pattern), re.ASCII)
     except re.error as exc:
         raise SchemaError(f"{where}: uncompilable pattern {pattern!r}: {exc}") from exc
 
@@ -293,7 +343,10 @@ class Validator:
             out.append(f"{path}: shorter than minLength {schema['minLength']}")
         if "maxLength" in schema and len(value) > schema["maxLength"]:
             out.append(f"{path}: longer than maxLength {schema['maxLength']}")
-        if "pattern" in schema and not re.search(schema["pattern"], value):
+        # `_compile`, never `re.search` on the raw pattern: the ECMA-262
+        # translation lives there, and a second match site that skipped it would
+        # be a constraint quietly meaning something else.
+        if "pattern" in schema and not _compile(schema["pattern"], self.name).search(value):
             out.append(f"{path}: {value!r} does not match pattern {schema['pattern']!r}")
         return out
 
@@ -361,7 +414,7 @@ class Validator:
                 out += self._errors(item, properties[name], where)
                 matched = True
             for pattern, sub in patterns.items():
-                if re.search(pattern, name):
+                if _compile(pattern, self.name).search(name):
                     out += self._errors(item, sub, where)
                     matched = True
             if not matched and "additionalProperties" in schema:

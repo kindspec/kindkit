@@ -344,6 +344,34 @@ MUTATIONS: tuple[Mutation, ...] = (
             "tests/test_mutation_gate.py::test_run_tests_sees_the_source_on_disk_not_the_cached_bytecode",
         ),
     ),
+    Mutation(
+        "a schema pattern's `$` goes back to meaning Python's `$`",
+        EVALUATOR,
+        'out.append(r"\\Z" if char == "$" else char)',
+        "out.append(char)",
+        ("tests/test_case_schema.py::test_a_kind_with_a_trailing_newline_is_rejected",),
+    ),
+    Mutation(
+        "character classes go back to Python's Unicode semantics",
+        EVALUATOR,
+        "return re.compile(_ecma(pattern), re.ASCII)",
+        "return re.compile(_ecma(pattern))",
+        ("tests/test_case_schema.py::test_character_classes_are_ascii_as_ecma_262_defines_them",),
+    ),
+    Mutation(
+        "NaN and Infinity become valid in a manifest",
+        VALIDATOR,
+        "parse_constant=_no_constants",
+        "parse_constant=None",
+        ("tests/test_case_schema.py::test_a_non_finite_number_is_rejected",),
+    ),
+    Mutation(
+        "a duplicated manifest key goes back to last-wins",
+        VALIDATOR,
+        "object_pairs_hook=_no_duplicates",
+        "object_pairs_hook=None",
+        ("tests/test_case_schema.py::test_a_duplicated_key_is_rejected",),
+    ),
 )
 
 

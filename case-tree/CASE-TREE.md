@@ -69,9 +69,30 @@ non-empty string. `kind` selects the handler that asserts the case and is
 input.
 
 Everything else in the object is the **case body**, and belongs to the kind. A
-runner MUST NOT require any other key, and MUST NOT interpret one. The schema
-in `expect.schema.json` constrains exactly this much, plus one naming
-convention: keys are lower snake_case, so a tree stays greppable across kinds.
+runner MUST NOT require any other key, and MUST NOT interpret one.
+
+`expect.schema.json` enforces exactly that, plus two naming conventions and
+nothing else. Both are spelled out here because this document is what someone
+writes a validator from, and a validator built from a shorter description of
+the schema would accept manifests the schema rejects:
+
+- **`kind` is lower-kebab.** `^[a-z0-9]+(-[a-z0-9]+)*$` — so `byte-identity`
+  and `parse` are kinds, and `Parse_1`, `PARSE` and `a--b` are not.
+- **Top-level keys are lower snake_case.** `^[a-z][a-z0-9_]*$`. This rule is
+  **shallow**: it applies to the keys of the manifest object itself and to
+  nothing nested inside it. A kind whose body carries a map of user-authored
+  names — rowspec's `aggregates` holds `{"a_total": 4, "Total Sales": 1}` —
+  is unaffected below the top level, and must be.
+
+The point of both is that a tree stays greppable across kinds. Neither says
+anything about *which* keys a kind may use.
+
+`expect.json` MUST be JSON as RFC 8259 defines it, not as one language's
+parser extends it. In particular it MUST NOT contain `NaN`, `Infinity` or
+`-Infinity`, which Python's `json` accepts and a Go, Rust or JavaScript parser
+refuses; and it MUST NOT repeat a key, because parsers disagree about which
+value wins. A manifest two conforming parsers would read differently is not a
+portable fixture, whatever any one runner makes of it.
 
 **Kind names are tree-local.** They are not registered anywhere and carry no
 meaning across trees. Two trees may both define `merge` and mean different
@@ -140,7 +161,8 @@ produced no verdict, and MUST say so distinctly from "nothing failed".
 A validator over a tree MUST reject:
 
 - a root that is missing, is not a directory, or contains no case;
-- an `expect.json` that is not valid JSON, or is not a JSON object;
+- an `expect.json` that is not valid RFC 8259 JSON — including one its own
+  parser would accept as an extension, per §4 — or is not a JSON object;
 - an `expect.json` with no `kind`, or a `kind` that is not a non-empty string;
 - a case directory holding nothing but `expect.json`;
 - a case directory holding another case directory;
@@ -156,3 +178,13 @@ looked at" MUST NOT look alike from the outside:
 A validator MUST fail on a schema keyword it does not implement, rather than
 ignoring it. A keyword silently skipped is a constraint that stopped being
 checked while the tree kept reporting a pass.
+
+`pattern` in `expect.schema.json` is an **ECMA-262** regex, as JSON Schema
+requires. A validator built on another engine MUST account for the difference
+rather than assume there is none. The one that bites: Python's `$` also matches
+just before a trailing newline and ECMA-262's does not, so an unadjusted Python
+translation of `^[a-z0-9]+(-[a-z0-9]+)*$` accepts `{"kind": "merge\n"}` — which
+a runner then refuses as an unknown kind. Python's `\Z` is the equivalent
+anchor; `\d`, `\w`, `\s` and `\b` diverge the same way and need ASCII
+semantics. The schema keeps `$` because the schema is the half that gets
+vendored, and `\Z` is not ECMA-262 syntax.

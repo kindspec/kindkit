@@ -1,3 +1,5 @@
+SPDX-License-Identifier: CC0-1.0
+
 CC0-1.0. Public domain dedication. Copy this schema and this document into any
 implementation, in any language, under any licence, with no obligation.
 
@@ -7,4 +9,9 @@ can be consumed without reading Python and without inheriting a licence.
 
 Embedding conformance cases — or the rules describing them — inside a
 share-alike specification document is the CommonMark mistake this split exists
-to avoid. Full text in ../LICENSES/CC0-1.0.txt.
+to avoid.
+
+The full text is at https://creativecommons.org/publicdomain/zero/1.0/legalcode
+and, in the kindkit repository this directory came from, in LICENSES/CC0-1.0.txt.
+A relative path is deliberately not used: this directory is meant to be copied
+out on its own, and a link that dangles in the vendored copy is worse than none.

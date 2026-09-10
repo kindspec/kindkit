@@ -194,3 +194,75 @@ def test_the_evaluator_keeps_booleans_and_numbers_apart():
     """`1 == True` in Python and `1 == true` is false in JSON."""
     assert Validator({"type": "integer"}).errors(True)
     assert Validator({"const": 1}).errors(True)
+
+
+# -- RFC 8259, not Python's superset -----------------------------------------
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        '{"kind": "parse", "value": NaN}',
+        '{"kind": "parse", "value": Infinity}',
+        '{"kind": "parse", "value": -Infinity}',
+    ],
+)
+def test_a_non_finite_number_is_rejected(tmp_path, envelope, text):
+    """`json.load` accepts these; RFC 8259 has no syntax for them at all, so a
+    Go, Rust or JavaScript parser refuses the file this one reads happily."""
+    failures = _failures(tmp_path, text, envelope=envelope)
+    assert any("not JSON" in message for message in failures)
+
+
+def test_a_duplicated_key_is_rejected(tmp_path, envelope):
+    """Python keeps the last; other parsers keep the first, or error. A manifest
+    two conforming parsers read differently is not a portable fixture."""
+    failures = _failures(tmp_path, '{"kind": "parse", "kind": "merge"}', envelope=envelope)
+    assert any("duplicate key" in message for message in failures)
+
+
+def test_ordinary_json_still_parses(tmp_path, envelope):
+    assert _failures(tmp_path, {"kind": "parse", "value": 1.5}, envelope=envelope) == []
+
+
+# -- ECMA-262, not Python `re` -----------------------------------------------
+
+
+def test_a_kind_with_a_trailing_newline_is_rejected(tmp_path, envelope):
+    r"""The schema's `$` means ECMA-262's `$`, not Python's.
+
+    Python's `$` also matches before a trailing newline, so an unadjusted
+    translation of the shipped pattern accepts `merge\n` -- which
+    `kindkit/runner.py` then refuses as an unknown kind. A manifest that passes
+    the validator and fails the runner is a check that could not fail on the
+    one input that mattered.
+    """
+    assert _failures(tmp_path, {"kind": "merge\n"}, envelope=envelope)
+
+
+def test_the_runner_agrees_that_a_trailing_newline_is_not_that_kind():
+    """The other half of the pair above, asserted rather than assumed."""
+    from kindkit import Adapter
+    from kindkit.runner import Case, _run_case
+
+    adapter = Adapter((".kv",), {"merge": lambda case: ()})
+    messages = list(_run_case(adapter, Case("x", "/nonexistent", {"kind": "merge\n"}, {})))
+    assert messages and "unknown kind" in messages[0]
+
+
+def test_character_classes_are_ascii_as_ecma_262_defines_them():
+    r"""Python's `\d` is Unicode-aware; ECMA-262's is not, even under `u`."""
+    digits = Validator({"type": "string", "pattern": "^\\d+$"})
+    assert digits.errors("٣"), "U+0663 is a digit to Python and not to ECMA-262"
+    assert digits.errors("7") == []
+
+
+def test_the_snake_case_rule_is_shallow():
+    """It constrains the manifest's own keys and nothing nested inside them.
+
+    rowspec's `aggregates` holds user-authored column names. A recursive rule
+    would reject 155 of its cases; the document says shallow, and so must this.
+    """
+    envelope_schema = vct.load(vct.ENVELOPE_SCHEMA)
+    nested = {"kind": "eval", "aggregates": {"Total Sales": 1, "A1": 2}}
+    assert envelope_schema.errors(nested) == []

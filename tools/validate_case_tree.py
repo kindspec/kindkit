@@ -38,6 +38,38 @@ _HERE = os.path.dirname(os.path.abspath(__file__))
 ENVELOPE_SCHEMA = os.path.join(os.path.dirname(_HERE), "case-tree", "expect.schema.json")
 
 
+class NotRFC8259(ValueError):
+    """The manifest is Python-JSON but not JSON.
+
+    `json.load` is a superset of RFC 8259 in two ways that matter to a tree
+    whose premise is "consumed without reading Python": it accepts `NaN`,
+    `Infinity` and `-Infinity`, and it silently keeps the last of a duplicated
+    key. A Go, Rust or JavaScript parser refuses the first and disagrees about
+    the second. A manifest either parser would read differently is not portable,
+    so this validator is stricter than `json.load` on purpose -- and stricter
+    than `kindkit/runner.py`, which is the safe direction for the two to differ.
+    """
+
+
+def _no_constants(token: str) -> None:
+    raise NotRFC8259(f"{token} is not JSON; RFC 8259 has no non-finite numbers")
+
+
+def _no_duplicates(pairs: list[tuple[str, object]]) -> dict:
+    seen: set[str] = set()
+    for name, _value in pairs:
+        if name in seen:
+            raise NotRFC8259(f"duplicate key {name!r}; parsers disagree about which value wins")
+        seen.add(name)
+    return dict(pairs)
+
+
+def read_manifest(path: str) -> object:
+    """Parse one manifest as RFC 8259 JSON rather than as Python's superset."""
+    with open(path, encoding="utf-8") as handle:
+        return json.load(handle, parse_constant=_no_constants, object_pairs_hook=_no_duplicates)
+
+
 class TreeError(Exception):
     """The tree is unusable, so there is no verdict to report."""
 
@@ -105,9 +137,8 @@ def _validate_case(
 
     path = os.path.join(dirpath, CASE_MANIFEST)
     try:
-        with open(path, encoding="utf-8") as handle:
-            expect = json.load(handle)
-    except (OSError, json.JSONDecodeError) as exc:
+        expect = read_manifest(path)
+    except (OSError, json.JSONDecodeError, NotRFC8259) as exc:
         return out + [f"{cid}: cannot read {CASE_MANIFEST}: {exc}"]
 
     for message in envelope.errors(expect, CASE_MANIFEST):
