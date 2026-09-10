@@ -80,12 +80,20 @@ the schema would accept manifests the schema rejects:
   and `parse` are kinds, and `Parse_1`, `PARSE` and `a--b` are not.
 - **Top-level keys are lower snake_case.** `^[a-z][a-z0-9_]*$`. This rule is
   **shallow**: it applies to the keys of the manifest object itself and to
-  nothing nested inside it. A kind whose body carries a map of user-authored
-  names — rowspec's `aggregates` holds `{"a_total": 4, "Total Sales": 1}` —
-  is unaffected below the top level, and must be.
+  nothing nested inside it.
 
 The point of both is that a tree stays greppable across kinds. Neither says
 anything about *which* keys a kind may use.
+
+Shallowness is a decision about future case bodies, not a concession to
+existing ones. **No tree exercises it today**: of the 155 manifests in
+rowspec's `conformance/cases/` that carry a nested object, all 60 distinct
+nested keys already match the top-level rule, so a recursive reading would
+reject none of them. The reason to keep it shallow anyway is §4's first
+paragraph — a nested key is the kind's own data, and constraining data is
+constraining vocabulary, which is the one thing the envelope must not do. A
+kind whose body maps user-authored names to values must be able to carry them
+verbatim, whatever they look like.
 
 `expect.json` MUST be JSON as RFC 8259 defines it, not as one language's
 parser extends it. In particular it MUST NOT contain `NaN`, `Infinity` or
@@ -181,10 +189,25 @@ checked while the tree kept reporting a pass.
 
 `pattern` in `expect.schema.json` is an **ECMA-262** regex, as JSON Schema
 requires. A validator built on another engine MUST account for the difference
-rather than assume there is none. The one that bites: Python's `$` also matches
-just before a trailing newline and ECMA-262's does not, so an unadjusted Python
-translation of `^[a-z0-9]+(-[a-z0-9]+)*$` accepts `{"kind": "merge\n"}` — which
-a runner then refuses as an unknown kind. Python's `\Z` is the equivalent
-anchor; `\d`, `\w`, `\s` and `\b` diverge the same way and need ASCII
-semantics. The schema keeps `$` because the schema is the half that gets
-vendored, and `\Z` is not ECMA-262 syntax.
+rather than assume there is none, and MUST NOT assume the differences all point
+the same way. Against Python `re`, taking a case tree's own patterns as the
+scope:
+
+| construct | ECMA-262 | Python `re` |
+| --- | --- | --- |
+| `$` (no `m`) | end of input | also before a trailing `\n` |
+| `.` | excludes `\n`, `\r`, U+2028, U+2029 | excludes `\n` only |
+| `\d`, `\w`, `\b` | ASCII-only | Unicode-aware |
+| `\s` | Unicode-aware | Unicode-aware, but a **different** set |
+| `[]`, `[^]` | empty class / any character | a literal `]` member |
+
+`$` is the one that has bitten: an unadjusted Python translation of
+`^[a-z0-9]+(-[a-z0-9]+)*$` accepts `{"kind": "merge\n"}`, which a runner then
+refuses as an unknown kind. `\Z` is the equivalent anchor. Note the fourth row
+— `\s` is the one where Python's ASCII flag, which fixes the third row, makes
+things worse. The schema keeps ECMA-262 spelling throughout, because the schema
+is the half that gets vendored.
+
+A validator SHOULD check its translation against a real ECMA-262 engine rather
+than against a reading of both specifications. Every row above except the first
+was found that way, and one of them contradicted the reading.

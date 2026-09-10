@@ -336,6 +336,10 @@ MUTATIONS: tuple[Mutation, ...] = (
         ("tests/test_case_schema.py::test_the_evaluator_refuses_a_keyword_it_cannot_check",),
     ),
     Mutation(
+        # The only mutation whose subject is this file. It works because the
+        # mutated `run_tests` is re-imported in the pytest subprocess -- so a
+        # refactor that ran the tests in-process would defang it silently, and
+        # this entry would keep reporting `caught` over a fix that was gone.
         "the gate reads bytecode cached beside the source, as it did before",
         "tools/mutation_gate.py",
         '            text=True,\n            env={**os.environ, "PYTHONPYCACHEPREFIX": cache},',
@@ -347,7 +351,7 @@ MUTATIONS: tuple[Mutation, ...] = (
     Mutation(
         "a schema pattern's `$` goes back to meaning Python's `$`",
         EVALUATOR,
-        'out.append(r"\\Z" if char == "$" else char)',
+        'out.append(r"\\Z")',
         "out.append(char)",
         ("tests/test_case_schema.py::test_a_kind_with_a_trailing_newline_is_rejected",),
     ),
@@ -371,6 +375,29 @@ MUTATIONS: tuple[Mutation, ...] = (
         "object_pairs_hook=_no_duplicates",
         "object_pairs_hook=None",
         ("tests/test_case_schema.py::test_a_duplicated_key_is_rejected",),
+    ),
+    Mutation(
+        # This one's test is the differential against node, so a `caught` here
+        # is also the evidence that the engine really ran rather than skipped.
+        "`.` goes back to meaning Python's `.`",
+        EVALUATOR,
+        "out.append(_ECMA_DOT)",
+        "out.append(char)",
+        ("tests/test_case_schema.py::test_the_translation_agrees_with_a_real_ecma_262_engine",),
+    ),
+    Mutation(
+        "`\\s` is left to be narrowed by re.ASCII",
+        EVALUATOR,
+        'out[-1:] = [_ECMA_SPACE if in_class else f"[{_ECMA_SPACE}]"]',
+        "out.append(char)",
+        ("tests/test_case_schema.py::test_backslash_s_is_not_narrowed_to_ascii",),
+    ),
+    Mutation(
+        "an empty character class is quietly read as Python reads it",
+        EVALUATOR,
+        'if char == "]" and index == class_start:',
+        "if False:",
+        ("tests/test_case_schema.py::test_a_pattern_the_two_flavours_read_differently_is_refused",),
     ),
 )
 

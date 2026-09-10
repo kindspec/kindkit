@@ -260,9 +260,154 @@ def test_character_classes_are_ascii_as_ecma_262_defines_them():
 def test_the_snake_case_rule_is_shallow():
     """It constrains the manifest's own keys and nothing nested inside them.
 
-    rowspec's `aggregates` holds user-authored column names. A recursive rule
-    would reject 155 of its cases; the document says shallow, and so must this.
+    No existing tree exercises this: every nested key in rowspec's corpus
+    already happens to match the top-level rule, so a recursive reading would
+    reject none of them today. That is exactly why it needs a test -- the
+    guarantee is about future case bodies, and nothing in the corpus would
+    notice if it were quietly dropped.
+
+    The instance below is therefore invented, and says so, rather than being
+    dressed up as a fixture that exists.
     """
     envelope_schema = vct.load(vct.ENVELOPE_SCHEMA)
-    nested = {"kind": "eval", "aggregates": {"Total Sales": 1, "A1": 2}}
+    nested = {"kind": "eval", "aggregates": {"Total Sales": 1, "A1": 2, "%": 3}}
     assert envelope_schema.errors(nested) == []
+
+
+def test_dot_excludes_every_ecma_262_line_terminator():
+    r"""Python's `.` excludes `\n` alone; ECMA-262's excludes all four.
+
+    The same slip as `$`, waiting for the first case-body schema to write
+    `^.{1,40}$` and quietly accept a trailing control character.
+    """
+    dot = Validator({"type": "string", "pattern": "^.$"})
+    for terminator in ("\n", "\r", " ", " "):
+        assert dot.errors(terminator), f"{terminator!r} is not `.` in ECMA-262"
+    assert dot.errors("a") == []
+
+
+def test_backslash_s_is_not_narrowed_to_ascii():
+    r"""`\d` and `\w` are ASCII-only in ECMA-262 and `\s` is not.
+
+    `re.ASCII` is right for the first two and wrong for this one, so `\s` is
+    spelled out instead. Assuming the family pointed one way is what put a
+    false claim in this module's docstring.
+    """
+    space = Validator({"type": "string", "pattern": "^\\s$"})
+    for whitespace in (" ", " ", " ", "　", "\t", " "):
+        assert space.errors(whitespace) == [], f"{whitespace!r} is `\\s` in ECMA-262"
+    assert space.errors("a")
+
+
+@pytest.mark.parametrize("pattern", ["^[]]$", "^[^]]$", "^[a\\S]$"])
+def test_a_pattern_the_two_flavours_read_differently_is_refused(pattern):
+    """`[]` is an empty class in ECMA-262 and a literal `]` in Python.
+
+    Both readings are defensible and only one can be applied, so the evaluator
+    refuses rather than silently picking one -- the same rule it applies to a
+    keyword it cannot check.
+    """
+    with pytest.raises(SchemaError):
+        Validator({"pattern": pattern})
+
+
+def test_the_translation_agrees_with_a_real_ecma_262_engine():
+    """Differential check, skipped when no engine is on PATH.
+
+    Every divergence this module translates except `$` was found by running
+    this comparison, and one of them contradicted a careful reading of both
+    specifications. A reading is a guess; an engine is a measurement.
+    """
+    import json as _json
+    import shutil
+    import subprocess
+
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("no ECMA-262 engine on PATH")
+
+    patterns = [
+        "^[a-z0-9]+(-[a-z0-9]+)*$",
+        "^[a-z][a-z0-9_]*$",
+        "^.$",
+        "^.{1,3}$",
+        "^a.b$",
+        "^\\d+$",
+        "^\\w+$",
+        "^\\s$",
+        "^\\s+$",
+        "^\\S$",
+        "^[a\\s]$",
+        "\\bword\\b",
+        "^[.$]$",
+        "^[^.$]$",
+        "\\$",
+        "\\.",
+        "^a\\\\$",
+        "^(?=a)a.$",
+        "^(a|b.)$",
+        "^$",
+        "^..$",
+        "a$|^b",
+        "^[a-z.]+$",
+        "^x.*y$",
+        "^[\\]]$",
+        "^[^\\]]$",
+        "^\\s*a\\s*$",
+        "^[0-9]{2}-[0-9]{2}$",
+        "^(?:a.c)+$",
+    ]
+    subjects = [
+        "a",
+        "ab",
+        "abc",
+        "merge",
+        "merge\n",
+        "merge\r",
+        "\n",
+        "\r",
+        " ",
+        " ",
+        " ",
+        "﻿",
+        "　",
+        "\t",
+        "\v",
+        "\f",
+        " ",
+        "",
+        ".",
+        "$",
+        "a.b",
+        "a$",
+        "a\\",
+        "word",
+        "7",
+        "٣",
+        "x",
+        "xy",
+        "x\ry",
+        "aa",
+        "b.",
+        "]",
+        "a.z",
+        " a ",
+        "12-34",
+        "abcabc",
+    ]
+    rows = [
+        {"pattern": p, "subject": s, "python": bool(Validator({"pattern": p}).errors(s) == [])}
+        for p in patterns
+        for s in subjects
+    ]
+    script = """
+        const rows = JSON.parse(process.argv[1]);
+        const bad = rows.filter(r => new RegExp(r.pattern).test(r.subject) !== r.python);
+        console.log(JSON.stringify({total: rows.length, bad: bad.slice(0, 5)}));
+    """
+    proc = subprocess.run(
+        [node, "-e", script, _json.dumps(rows)], capture_output=True, text=True, check=True
+    )
+    result = _json.loads(proc.stdout)
+    assert result["total"] == len(patterns) * len(subjects)
+    assert result["bad"] == [], f"disagreed with ECMA-262 on {result['bad']}"

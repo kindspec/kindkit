@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: MIT
-"""A JSON Schema (draft 2020-12) evaluator, in the standard library only.
+r"""A JSON Schema (draft 2020-12) evaluator, in the standard library only.
 
 This exists so that `case-tree/expect.schema.json` can be checked against a
 tree without the kit taking a dependency. It implements a subset of the draft,
@@ -20,11 +20,13 @@ Deliberate limitations, stated rather than hidden:
   remote resolution and no `$dynamicRef`. A case-body schema is applied
   alongside the envelope rather than `$ref`-ing it, so nothing needs it.
 * `pattern` and `patternProperties` are ECMA-262 regexes, per the draft, and
-  Python `re` is NOT a drop-in for one. Two divergences bite a case tree and
-  are translated here rather than waved at -- see `_ecma`. Everything else is
-  Python `re` as written, so a pattern using a construct the two spell
-  differently means one thing here and another in a real validator. Keep the
-  patterns in a vendored schema boring.
+  Python `re` is NOT a drop-in for one. Four divergences reach a case tree --
+  `$`, `.`, `\s`, and `\d`/`\w`/`\b` -- and are translated rather than waved
+  at, with two more refused outright; see `_ecma` and `_compile`. Everything
+  else is Python `re` as written, so
+  a pattern using a construct the two spell differently means one thing here
+  and another in a real validator. Keep the patterns in a vendored schema
+  boring, and check a new one against a real engine.
 * `format` is not implemented, and is therefore rejected rather than ignored.
 """
 
@@ -139,30 +141,80 @@ def _equal(a: Any, b: Any) -> bool:
     return _canonical(a) == _canonical(b)
 
 
-def _ecma(pattern: str) -> str:
-    r"""Translate the two ECMA-262/Python divergences that reach a case tree.
+#: ECMA-262's LineTerminator set: LF, CR, U+2028, U+2029. Python's `.` excludes
+#: only LF, so `.` is wider here than in a browser by three characters.
+_ECMA_DOT = "[^\\n\\r\\u2028\\u2029]"
 
-    `$` is the one that bites. ECMA-262 without the `m` flag anchors `$` at the
+#: ECMA-262 `\s` is WhiteSpace + LineTerminator, and unlike its `\d` and `\w`
+#: it is Unicode-aware -- so `re.ASCII`, which is right for the other two, makes
+#: this one too NARROW. Spelled out rather than flagged.
+_ECMA_SPACE = (
+    "\\t\\v\\f \\u00a0\\ufeff\\u1680\\u2000-\\u200a\\u202f\\u205f\\u3000\\n\\r\\u2028\\u2029"
+)
+
+
+def _ecma(pattern: str) -> str:
+    r"""Translate the ECMA-262/Python divergences that reach a case tree.
+
+    Three of the four are the same shape -- Python is *wider* than ECMA-262 at
+    the end-of-input edge, so an anchored pattern quietly admits a trailing
+    control character it did not mean to. `\s` is the exception and runs the
+    other way; it is below, because assuming the whole family pointed one way
+    is how the wrong version of this docstring got written.
+
+    `$` is the one that bit. ECMA-262 without the `m` flag anchors `$` at the
     very end of the string; Python's `$` also matches just BEFORE a trailing
-    newline. Every anchored pattern in a shipped schema therefore admits a
-    trailing `\n` it did not mean to. `{"kind": "merge\n"}` passed
-    `^[a-z0-9]+(-[a-z0-9]+)*$` here while `kindkit/runner.py` rejected the same
-    manifest with `unknown kind 'merge\n'` -- a constraint that could not fail
-    on the one input that mattered. Python's `\Z` is exactly ECMA's `$`, so a
-    bare `$` outside a character class becomes `\Z`.
+    newline. `{"kind": "merge\n"}` passed `^[a-z0-9]+(-[a-z0-9]+)*$` here while
+    `kindkit/runner.py` rejected the same manifest with `unknown kind
+    'merge\n'` -- a constraint that could not fail on the one input that
+    mattered. Python's `\Z` is exactly ECMA's `$`, so a bare `$` outside a
+    character class becomes `\Z`.
+
+    `.` is the same slip waiting for the first case-body schema that writes
+    `^.{1,40}$`. ECMA-262's `.` excludes all four LineTerminators; Python's
+    excludes only `\n`, so `^.$` matches `"\r"`, U+2028 and U+2029 here and
+    matches none of them in a browser. A bare `.` becomes an explicit negated
+    class.
+
+    `\s` goes the other way and caught an earlier version of this docstring
+    out. ECMA-262's `\d` and `\w` are ASCII-only, so `re.ASCII` in `_compile`
+    is right for them -- but its `\s` is Unicode-aware and includes the
+    LineTerminators, so the same flag makes `\s` too NARROW here. It is spelled
+    out as an explicit class instead.
 
     `^` needs no translation: without `re.MULTILINE` it is `\A` already.
 
-    The schema keeps `$`, because `\Z` is not ECMA-262 syntax and the schema is
-    the half that gets vendored into a JavaScript or Go validator. The
-    translation belongs to this evaluator, not to the file it reads.
+    One divergence is refused rather than translated. `[]` is an empty class in
+    ECMA-262 and `[^]` matches anything; Python reads that `]` as a literal
+    member. Both readings are defensible and only one can be applied, so a
+    pattern relying on it raises instead of quietly meaning something. `\S`
+    inside a character class is refused for the same reason -- a negated set
+    cannot be inlined into an enclosing class.
+
+    The schema keeps `$`, `.` and `\s`, because `\Z` is not ECMA-262 syntax
+    and the schema is the half that gets vendored into a JavaScript or Go
+    validator. The translation belongs to this evaluator, not to the file it
+    reads. `tests/test_case_schema.py` checks the translation against a real
+    ECMA-262 engine when one is on PATH.
     """
     out: list[str] = []
     escaped = False
     in_class = False
-    for char in pattern:
+    class_start = -1
+    for index, char in enumerate(pattern):
         if escaped:
-            out.append(char)
+            if char == "s":
+                # `[a\s]` becomes `[a<contents>]`; bare `\s` becomes the class.
+                out[-1:] = [_ECMA_SPACE if in_class else f"[{_ECMA_SPACE}]"]
+            elif char == "S":
+                if in_class:
+                    raise SchemaError(
+                        rf"pattern {pattern!r}: `\S` inside a character class cannot be "
+                        "translated to ECMA-262 semantics, and is refused rather than guessed"
+                    )
+                out[-1:] = [f"[^{_ECMA_SPACE}]"]
+            else:
+                out.append(char)
             escaped = False
             continue
         if char == "\\":
@@ -170,23 +222,41 @@ def _ecma(pattern: str) -> str:
             escaped = True
             continue
         if in_class:
+            # `[]` is an EMPTY class in ECMA-262 and `[^]` matches anything;
+            # Python reads the `]` as a literal member instead. The two cannot
+            # both be right, so a pattern that relies on it is refused.
+            if char == "]" and index == class_start:
+                raise SchemaError(
+                    f"pattern {pattern!r}: `[]`/`[^]` means an empty class in ECMA-262 and a "
+                    "literal `]` in Python. Escape it as `\\]`."
+                )
+            # Otherwise `$` and `.` are literal inside a class in either flavour.
             in_class = char != "]"
             out.append(char)
             continue
         if char == "[":
             in_class = True
+            # Where the first member would sit, skipping a leading negation.
+            class_start = index + 2 if pattern[index + 1 : index + 2] == "^" else index + 1
             out.append(char)
             continue
-        out.append(r"\Z" if char == "$" else char)
+        if char == "$":
+            out.append(r"\Z")
+        elif char == ".":
+            out.append(_ECMA_DOT)
+        else:
+            out.append(char)
     return "".join(out)
 
 
 @functools.cache
 def _compile(pattern: str, where: str) -> re.Pattern[str]:
     try:
-        # re.ASCII is the second divergence: Python's `\d`, `\w`, `\s` and `\b`
-        # are Unicode-aware, ECMA-262's are ASCII-only even under `u`. Without
-        # the flag `\d` here matches U+0663 and does not in a browser.
+        # re.ASCII covers `\d`, `\w` and `\b`: Python's are Unicode-aware and
+        # ECMA-262's are ASCII-only even under `u`, so without the flag `\d`
+        # here matches U+0663 and does not in a browser. It deliberately does
+        # NOT cover `\s`, whose ECMA-262 definition IS Unicode-aware; `_ecma`
+        # rewrites that one before this flag can narrow it.
         return re.compile(_ecma(pattern), re.ASCII)
     except re.error as exc:
         raise SchemaError(f"{where}: uncompilable pattern {pattern!r}: {exc}") from exc
