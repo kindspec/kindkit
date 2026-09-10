@@ -126,7 +126,7 @@ MUTATIONS: tuple[Mutation, ...] = (
         "if False:",
         (
             "tests/test_runner.py::test_a_non_string_kind_is_a_hard_failure",
-            "tests/test_runner.py::test_a_non_string_kind_does_not_strand_the_cases_after_it",
+            "tests/test_runner.py::test_a_non_string_kind_is_a_tree_fault_not_a_crash",
         ),
     ),
     Mutation(
