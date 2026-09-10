@@ -1,0 +1,10 @@
+CC0-1.0. Public domain dedication. Copy this schema and this document into any
+implementation, in any language, under any licence, with no obligation.
+
+Nothing in this directory is code and nothing in it is prose about kindkit. It
+describes the shape of a conformance case tree and nothing else, so that a tree
+can be consumed without reading Python and without inheriting a licence.
+
+Embedding conformance cases — or the rules describing them — inside a
+share-alike specification document is the CommonMark mistake this split exists
+to avoid. Full text in ../LICENSES/CC0-1.0.txt.

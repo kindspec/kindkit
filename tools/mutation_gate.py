@@ -47,6 +47,9 @@ RUNNER = "kindkit/runner.py"
 CLI = "kindkit/cli.py"
 GITMERGE = "kindkit/gitmerge.py"
 KVKIND = "tests/kvkind.py"
+SCHEMA = "case-tree/expect.schema.json"
+VALIDATOR = "tools/validate_case_tree.py"
+EVALUATOR = "tools/jsonschema_min.py"
 
 MUTATIONS: tuple[Mutation, ...] = (
     Mutation(
@@ -254,6 +257,83 @@ MUTATIONS: tuple[Mutation, ...] = (
         (
             "tests/test_runner.py::test_the_suite_rejects_an_implementation_whose_structure_is_the_raw_text",
         ),
+    ),
+    # -- case-tree/. The convention is CC0 and standalone, so this gate is the
+    # -- only thing proving it is enforceable rather than merely written down.
+    Mutation(
+        "'kind' stops being required",
+        SCHEMA,
+        '"required": ["kind"],',
+        '"required": [],',
+        ("tests/test_case_schema.py::test_a_manifest_with_no_kind_is_rejected",),
+    ),
+    Mutation(
+        "'kind' may be any JSON scalar",
+        SCHEMA,
+        '"type": "string",',
+        '"type": ["string", "number"],',
+        ("tests/test_case_schema.py::test_a_non_string_kind_is_rejected",),
+    ),
+    Mutation(
+        "'kind' stops having to be lower-kebab",
+        SCHEMA,
+        '"^[a-z0-9]+(-[a-z0-9]+)*$"',
+        '".*"',
+        ("tests/test_case_schema.py::test_a_kind_that_is_not_lower_kebab_is_rejected",),
+    ),
+    Mutation(
+        "case-body keys stop having to be snake_case",
+        SCHEMA,
+        '"^[a-z][a-z0-9_]*$"',
+        '".*"',
+        ("tests/test_case_schema.py::test_a_body_key_that_is_not_snake_case_is_rejected",),
+    ),
+    Mutation(
+        "a case holding nothing but its manifest becomes valid",
+        VALIDATOR,
+        "    if not [name for name in names if name != CASE_MANIFEST]:",
+        "    if False:",
+        ("tests/test_case_schema.py::test_a_case_holding_nothing_but_the_manifest_is_rejected",),
+    ),
+    Mutation(
+        "a nested case stops being noticed",
+        VALIDATOR,
+        "        if inner != parent and inner.startswith(parent + os.sep):",
+        "        if False:",
+        ("tests/test_case_schema.py::test_a_nested_case_is_rejected",),
+    ),
+    Mutation(
+        "a tree with no cases stops being a hard failure",
+        VALIDATOR,
+        "    if not cases:\n        raise TreeError(",
+        "    if False:\n        raise TreeError(",
+        (
+            "tests/test_case_schema.py::test_a_tree_with_no_verdict_raises_rather_than_counting_zero",
+        ),
+    ),
+    Mutation(
+        "a kind's declared case body is never applied",
+        VALIDATOR,
+        "    if body is not None:",
+        "    if False:",
+        ("tests/test_case_schema.py::test_a_body_schema_at_the_root_is_applied",),
+    ),
+    Mutation(
+        "an unusable case-body schema is swallowed instead of raising",
+        VALIDATOR,
+        "        raise TreeError(str(exc)) from exc",
+        "        return None",
+        ("tests/test_case_schema.py::test_an_unusable_body_schema_is_a_tree_fault_not_a_pass",),
+    ),
+    Mutation(
+        # The §2.2 rule aimed at the checker rather than the thing checked. A
+        # conforming JSON Schema implementation IGNORES an unknown keyword;
+        # here that would drop a constraint and keep reporting a pass.
+        "the evaluator ignores a keyword it cannot check, as a general one would",
+        EVALUATOR,
+        "        if unknown:",
+        "        if False:",
+        ("tests/test_case_schema.py::test_the_evaluator_refuses_a_keyword_it_cannot_check",),
     ),
 )
 
