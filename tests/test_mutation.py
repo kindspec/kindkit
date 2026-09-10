@@ -346,6 +346,23 @@ def test_a_mutant_is_never_served_the_previous_probes_bytecode(tmp_path):
     )
 
 
+def test_a_scratch_path_that_is_the_source_is_refused(tmp_path):
+    """The scratch file is overwritten and deleted. Pointed at the source, so is it."""
+    source = str(tmp_path / "impl.py")
+    shutil.copyfile(KVKIND, source)
+    link = str(tmp_path / "same-file.py")
+    os.symlink(source, link)
+
+    for scratch in (source, link):
+        with pytest.raises(GateError, match="same file"):
+            run_gate(
+                [Mutant("refuses-no-equals", *REFUSES_NO_EQUALS)],
+                source=source,
+                scratch=scratch,
+            )
+    assert os.path.exists(source), "the implementation was deleted"
+
+
 def test_an_implementation_that_changes_under_the_gate_is_a_hard_failure(tmp_path):
     """Hashed before and after: a result about source that moved means nothing."""
     source = str(tmp_path / "impl.py")

@@ -105,7 +105,8 @@ report = gate(
     mutants=[Mutant("blank-rows-are-dropped", "if line == '':", "if False:")],
     probe=probe,
     # A name NOTHING ELSE on the path claims -- see "what a probe has to get
-    # right" below.
+    # right" below. Never the source file: the scratch file is overwritten and
+    # deleted, and the gate refuses the two being the same file for that reason.
     scratch=os.path.join(HERE, "mykind_mutant_under_test.py"),
 )
 sys.exit(0 if report.ok else 1)

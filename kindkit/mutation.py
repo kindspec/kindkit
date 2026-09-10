@@ -477,6 +477,14 @@ def gate(
     """
     src_path = _anchored(source, "source")
     scratch_path = _anchored(scratch, "scratch")
+    if os.path.realpath(scratch_path) == os.path.realpath(src_path):
+        # The scratch file is written over and removed at the end of the run.
+        # Pointed at the implementation, the gate would delete it -- loudly,
+        # because the closing hash of a file that is gone raises, but gone.
+        raise GateError(
+            f"scratch and source are the same file ({src_path!r}): the scratch "
+            "file is overwritten and deleted, so this would destroy the implementation"
+        )
     ordered = tuple(mutants)
     if not ordered:
         # A gate with no mutants is a check that cannot fail, which is the one

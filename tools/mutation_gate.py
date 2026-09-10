@@ -482,6 +482,13 @@ MUTATIONS: tuple[Mutation, ...] = (
         (T_MUT + "test_a_mutant_is_never_served_the_previous_probes_bytecode",),
     ),
     Mutation(
+        "the scratch file may be the implementation, which the run then deletes",
+        MUTATION,
+        "    if os.path.realpath(scratch_path) == os.path.realpath(src_path):",
+        "    if False:",
+        (T_MUT + "test_a_scratch_path_that_is_the_source_is_refused",),
+    ),
+    Mutation(
         "the gate reaches outside the standard library",
         MUTATION,
         "import ast\nimport glob",
