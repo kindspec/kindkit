@@ -1,7 +1,7 @@
 # kindkit
 
-**Status: not started.** This repository is a stub. It exists so that the
-decisions already made are not lost, and so the extraction can begin from them.
+**Status: the runner is extracted; nothing has adopted it yet.** The gate and
+the CI workflow are still rowspec's. No kind depends on this repository.
 
 The shared machinery behind every [kindspec](https://github.com/kindspec) kind:
 the tree-driven conformance runner, the mutation gate, the case-tree convention,
@@ -34,6 +34,48 @@ same cases.
 merge, and assert on a result. It does not know what a row is, what a block is,
 or what a node is. If a change to the kit requires knowing, the abstraction is
 wrong and the honest answer is to leave it in the kind.
+
+## Using the runner
+
+A kind supplies two things: a **fixture root**, and an **adapter** — the suffix
+its artifacts use, and one handler per case `kind`. A handler is given a `Case`
+and yields one message per thing that is wrong; yielding nothing is a pass.
+
+```python
+from kindkit import Adapter, cli
+
+
+# What a `parse` case MEANS is the kind's business, and lives here, not in the kit.
+def parse(case):
+    try:
+        mykind.read(case.files["input"], base=case.dir)
+        refusal = None
+    except mykind.Malformed as exc:
+        refusal = str(exc)
+    if case.expect["accept"] and refusal is not None:
+        yield f"expected accept, got {refusal!r}"
+
+
+adapter = Adapter(fixture_suffixes=(".mykind",), handlers={"parse": parse})
+sys.exit(cli.main(adapter, sys.argv[1:]))
+```
+
+A `Case` carries its `id`, its `dir` (the artifact's directory, and by
+convention its repository root), the parsed `expect`, and `files` — the fixture
+files keyed by stem, read as exact bytes with no newline translation.
+
+Three exit codes, because "every case passed" and "no case ran" must never look
+alike from the outside:
+
+    0   every case passed
+    1   at least one case failed — a verdict about the implementation
+    2   the fixture tree yielded no verdict at all
+
+An empty root, a missing root, a root that is a file, a manifest that will not
+parse, and — with `--min-cases` — a tree that shrank are all the third thing.
+They raise rather than being counted, so a caller that only counts failures
+cannot turn "nothing ran" into "nothing failed". That is the bug this project
+has now found in its own tooling more times than any other.
 
 ## The standard this has to meet
 
