@@ -335,6 +335,15 @@ MUTATIONS: tuple[Mutation, ...] = (
         "        if False:",
         ("tests/test_case_schema.py::test_the_evaluator_refuses_a_keyword_it_cannot_check",),
     ),
+    Mutation(
+        "the gate reads bytecode cached beside the source, as it did before",
+        "tools/mutation_gate.py",
+        '            text=True,\n            env={**os.environ, "PYTHONPYCACHEPREFIX": cache},',
+        "            text=True,\n            env=None,",
+        (
+            "tests/test_mutation_gate.py::test_run_tests_sees_the_source_on_disk_not_the_cached_bytecode",
+        ),
+    ),
 )
 
 
@@ -357,17 +366,25 @@ def run_tests(tests: tuple[str, ...]) -> int:
     the tests never ran -- the third shape of self-disarming sweep, and the one
     the hash check does not cover.
 
-    Each run compiles into a FRESH bytecode cache. A fourth shape, found by
-    this gate reporting a mutation as SURVIVED that goes red on its own: CPython
-    invalidates a `.pyc` on (source mtime in WHOLE SECONDS, source size), and
-    two mutations to one file can land in the same second at the same size --
-    two `if <cond>:` -> `if False:` edits whose conditions happen to be the same
-    length do exactly that. The second then runs against the first one's
-    bytecode. The hash
-    check cannot see this, because the file on disk really did change; what did
-    not change is what the interpreter executed. An empty cache per run removes
-    the class rather than this instance of it, and would otherwise be free to
-    mistake one mutation's verdict for another's.
+    Each run compiles into a FRESH bytecode cache. A fourth shape, found by this
+    gate reporting a mutation as SURVIVED that went red when run on its own:
+    CPython invalidates a `.pyc` on (source mtime in WHOLE SECONDS, source
+    size), so two mutations to one file that land in the same second at the same
+    size make the second run against the first one's bytecode. Two
+    `if <cond>:` -> `if False:` edits whose conditions are the same length do
+    exactly that, whatever their indentation.
+
+    The hash check cannot see it: the file on disk really did change; what did
+    not change is what the interpreter executed.
+
+    This is not a hazard the case-tree mutations introduced. Two same-file,
+    same-mutated-size pairs were already here -- `kindkit/runner.py` at 9910
+    bytes ("a tree that shrank" / "only the first failure a handler yields")
+    and `kindkit/gitmerge.py` at 4150 ("a branch nobody asked for" / "the last
+    branch is never merged"). Both were saved by landing in different seconds,
+    which is timing, not spacing. The loud symptom is a false SURVIVED; the
+    quiet one is a mutation credited with another mutation's verdict. An empty
+    cache per run removes the class rather than the instance.
     """
     with tempfile.TemporaryDirectory() as cache:
         proc = subprocess.run(
