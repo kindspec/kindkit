@@ -43,16 +43,27 @@ jobs:
         if: always()
         run: |
           uv run python - <<'PY'
+          import importlib
           import sys
-          import kindkit, kindkit.cli, kindkit.gitmerge, kindkit.runner  # noqa: F401
 
-          leaked = sorted(
-              m for m in sys.modules
+          # The DELTA, not the whole of sys.modules. An interpreter arrives with
+          # modules already loaded that the kit never asked for -- this step
+          # first went red on `sitecustomize`, which the runner image injects at
+          # startup. A check that fails for a reason unrelated to its name is
+          # not the check its name claims.
+          before = set(sys.modules)
+          for name in ("kindkit", "kindkit.cli", "kindkit.gitmerge", "kindkit.runner"):
+              importlib.import_module(name)
+          added = sorted(set(sys.modules) - before)
+
+          leaked = [
+              m for m in added
               if m.split(".")[0] not in sys.stdlib_module_names
               and not m.startswith(("kindkit", "_"))
-          )
+          ]
           if leaked:
-              print(f"::error::the kit pulled in {leaked}")
+              print(f"::error::importing the kit pulled in {leaked}")
               sys.exit(1)
-          print("the kit imports the standard library and nothing else")
+          print(f"the kit pulled in {len(added)} modules, all of them stdlib or its own:")
+          print("  " + ", ".join(added))
           PY
