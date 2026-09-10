@@ -36,6 +36,12 @@ merge, and assert on a result. It does not know what a row is, what a block is,
 or what a node is. If a change to the kit requires knowing, the abstraction is
 wrong and the honest answer is to leave it in the kind.
 
+One honest limit: **the gate is Python-only.** It splices mutants with
+`tokenize`, `ast` and `compile`, so a kind whose reference implementation is
+written in something else gets the runner, the conventions and the workflow,
+and has to bring its own gate. The runner has no such limit — it drives a
+fixture tree and never imports anything of the kind's.
+
 ## Using the runner
 
 A kind supplies two things: a **fixture root**, and an **adapter** — the suffix
