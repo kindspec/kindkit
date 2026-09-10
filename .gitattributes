@@ -13,3 +13,7 @@ go.sum linguist-generated
 # line-ending preservation -- the first commit warned it was about to do this.
 # `-text` disables all normalisation for the tree.
 conformance/cases/** -text
+
+# The kit's own toy case tree asserts on exact bytes for the same reason, so it
+# is exempt from end-of-line normalisation too.
+tests/fixtures/** -text
