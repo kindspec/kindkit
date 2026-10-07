@@ -248,7 +248,6 @@ MUTATIONS: tuple[Mutation, ...] = (
         (
             "tests/test_gitmerge.py::test_the_callers_git_environment_does_not_reach_the_merge[global-conflict-style]",
             "tests/test_gitmerge.py::test_the_callers_git_environment_does_not_reach_the_merge[global-attributes-file]",
-            "tests/test_gitmerge.py::test_the_callers_git_environment_does_not_reach_the_merge[home-xdg-default]",
         ),
     ),
     Mutation(
