@@ -123,6 +123,14 @@ def test_an_unreadable_manifest_is_a_failure_not_a_skipped_case(tmp_path, envelo
     assert any("cannot read" in message for message in failures)
 
 
+def test_a_manifest_that_is_not_utf8_is_reported_invalid_not_a_traceback(tmp_path, capsys):
+    root = _case(tmp_path, "{}")
+    with open(os.path.join(root, "some", "case", "expect.json"), "wb") as handle:
+        handle.write(b'{"kind": "caf\xe9"}')
+    assert vct.main([root]) == 1
+    assert "INVALID some/case: cannot read expect.json:" in capsys.readouterr().out
+
+
 @pytest.mark.parametrize("make", ["missing", "file", "empty"])
 def test_a_tree_with_no_verdict_raises_rather_than_counting_zero(tmp_path, envelope, make):
     if make == "missing":
