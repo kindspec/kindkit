@@ -594,8 +594,8 @@ MUTATIONS: tuple[Mutation, ...] = (
     Mutation(
         "the gate mutates the implementation in place",
         MUTATION,
-        "            verdict = _probe(probe, scratch_path, mutated)",
-        "            verdict = _probe(probe, src_path, mutated)",
+        "            verdict = _probe(probe, scratch_path, mutated, next(stamps))",
+        "            verdict = _probe(probe, src_path, mutated, next(stamps))",
         (T_MUT + "test_the_gate_never_writes_to_the_implementation",),
     ),
     Mutation(
@@ -819,6 +819,37 @@ MUTATIONS: tuple[Mutation, ...] = (
         "    if os.path.realpath(scratch_path) == os.path.realpath(src_path):",
         "    if False:",
         (T_MUT + "test_a_scratch_path_that_is_the_source_is_refused",),
+    ),
+    Mutation(
+        "a scratch write keeps the wall-clock mtime, so writes share a second",
+        MUTATION,
+        "    os.utime(path, (stamp, stamp))",
+        "    pass",
+        (T_MUT + "test_a_mutant_is_never_served_bytecode_the_purge_cannot_see",),
+    ),
+    Mutation(
+        "every scratch write in a run gets the same mtime",
+        MUTATION,
+        "    stamps = itertools.count(random.SystemRandom().randrange(*_STAMP_RANGE), _STAMP_STEP)",
+        "    stamps = itertools.repeat(random.SystemRandom().randrange(*_STAMP_RANGE))",
+        (T_MUT + "test_a_mutant_is_never_served_bytecode_the_purge_cannot_see",),
+    ),
+    Mutation(
+        "scratch writes are stamped one second apart, which FAT stores as equal",
+        MUTATION,
+        "_STAMP_STEP = 2",
+        "_STAMP_STEP = 1",
+        (T_MUT + "test_consecutive_scratch_writes_are_two_seconds_apart",),
+    ),
+    Mutation(
+        "the first stamp comes from the caller's seedable random generator",
+        MUTATION,
+        "random.SystemRandom().randrange(*_STAMP_RANGE), _STAMP_STEP",
+        "random.randrange(*_STAMP_RANGE), _STAMP_STEP",
+        (
+            T_MUT + "test_a_callers_random_generator_is_not_drawn_from",
+            T_MUT + "test_a_callers_random_seed_does_not_fix_the_stamps",
+        ),
     ),
     Mutation(
         "a run that killed nothing reports a pass",

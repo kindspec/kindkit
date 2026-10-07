@@ -16,9 +16,11 @@ from __future__ import annotations
 import glob
 import importlib.util
 import os
+import random
 import shutil
 import subprocess
 import sys
+import time
 
 import pytest
 
@@ -418,6 +420,103 @@ def test_a_mutant_is_never_served_the_previous_probes_bytecode(
         "no bytecode was cached where this case expects it, so this test could "
         "not have caught the defect it names"
     )
+
+
+#: Same-size mutants of CACHED. The suite detects a `b...` mark and allows an
+#: `a...` one, and the gate writes them alternately, so a mutant served the
+#: previous write's bytecode always gets the verdict of the other class.
+_PAIRS = 10
+
+
+def test_a_mutant_is_never_served_bytecode_the_purge_cannot_see(tmp_path):
+    """The collision with nothing pinned: no `os.utime` anywhere in the probe.
+
+    The probe's interpreter caches under a prefix of its own, which the gate
+    cannot see or purge (kindspec/kindkit#11). Fast probes then land several
+    writes in one mtime second, and the loader validates the previous write's
+    `.pyc` against the next one's (second, size).
+    """
+    source = tmp_path / "impl.py"
+    source.write_text(CACHED)
+    prefix = tmp_path / "probe-prefix"
+    env = dict(os.environ, PYTHONPYCACHEPREFIX=str(prefix))
+
+    def probe(path: str) -> Verdict:
+        mark = _in_a_child(path, dict(env))
+        return Verdict(ran={"mark"}, failures={"mark"} if mark.startswith("b") else ())
+
+    mutants = []
+    for i in range(_PAIRS):
+        mutants.append(Mutant(f"b{i:02d}", 'MARK = "aaa"', f'MARK = "b{i:02d}"'))
+        mutants.append(
+            Mutant(f"a{i:02d}", 'MARK = "aaa"', f'MARK = "a{i:02d}"', equivalent="the suite allows")
+        )
+    started = time.monotonic()
+    report = gate(
+        source=str(source),
+        mutants=mutants,
+        probe=probe,
+        scratch=str(tmp_path / "under_test.py"),
+        report=quiet,
+    )
+    elapsed = time.monotonic() - started
+
+    # Without both of these the collision was never possible, and a pass here
+    # would say nothing: no bytecode in the probe's prefix, or writes so slow
+    # that no two of them shared a second.
+    assert glob.glob(str(prefix / "**" / "under_test.*.pyc"), recursive=True)
+    assert elapsed < 2 * _PAIRS - 1, f"{elapsed:.1f}s: too slow to share an mtime second"
+
+    assert report.killed == tuple(f"b{i:02d}" for i in range(_PAIRS))
+    assert report.equivalent == tuple(f"a{i:02d}" for i in range(_PAIRS))
+    assert report.ok
+
+
+def _stamps_of_a_run(tmp_path, name: str) -> list[float]:
+    """The scratch file's mtime at each probe of one gate run."""
+    source = tmp_path / f"{name}.py"
+    source.write_text(CACHED)
+    seen: list[float] = []
+
+    def probe(path: str) -> Verdict:
+        seen.append(os.stat(path).st_mtime)
+        with open(path, encoding="utf-8") as handle:
+            caught = "aaa" not in handle.read()
+        return Verdict(ran={"mark"}, failures={"mark"} if caught else ())
+
+    gate(
+        source=str(source),
+        mutants=[Mutant(f"m{i}", 'MARK = "aaa"', f'MARK = "b{i}{i}"') for i in range(3)],
+        probe=probe,
+        scratch=str(tmp_path / f"{name}_under_test.py"),
+        report=quiet,
+    )
+    return seen
+
+
+def test_consecutive_scratch_writes_are_two_seconds_apart(tmp_path):
+    # FAT and exFAT store mtimes in 2-second steps, so stamps one second apart
+    # can land on the same stored value and collide again.
+    stamps = _stamps_of_a_run(tmp_path, "steps")
+    assert len(stamps) == 4
+    assert [b - a for a, b in zip(stamps, stamps[1:], strict=False)] == [2, 2, 2]
+
+
+def test_a_callers_random_generator_is_not_drawn_from(tmp_path):
+    random.seed(1234)
+    state = random.getstate()
+    _stamps_of_a_run(tmp_path, "one")
+    assert random.getstate() == state, "the gate drew from the caller's random generator"
+
+
+def test_a_callers_random_seed_does_not_fix_the_stamps(tmp_path):
+    # Seeded the same way twice, two runs must still start on different
+    # stamps; otherwise the second can inherit the first one's `.pyc`.
+    random.seed(1234)
+    first = _stamps_of_a_run(tmp_path, "one")[0]
+    random.seed(1234)
+    second = _stamps_of_a_run(tmp_path, "two")[0]
+    assert first != second, "a seeded caller made two runs start on the same stamp"
 
 
 def test_a_scratch_path_that_is_the_source_is_refused(tmp_path):

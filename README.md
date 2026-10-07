@@ -216,7 +216,7 @@ a probe may be any subprocess with any path. It is at least loud, because the
 baseline is probed through the same scratch path, so a probe reading something
 else agrees with itself and **every** mutant survives.
 
-**The kit clears the scratch file's cached bytecode after every write**, and
+**The kit defeats the scratch file's cached bytecode on every write**, and
 that one would not have been loud. A `.pyc` is validated on the source mtime
 in whole *seconds* plus its size, so two mutants of the same size written in
 the same second are indistinguishable to the loader and the second is served
@@ -224,17 +224,38 @@ the first one's code. Unlike shadowing, this is asymmetric — the baseline
 compiles a real `.pyc` and only colliding mutants read it back — so the run
 ends with a mixture of correct and silently wrong verdicts. Measured, on a
 probe doing nothing more exotic than `spec_from_file_location`: exit 0 over a
-mutant the suite provably detects. The kit purges `<stem>.*.pyc` on each
-write in two places: `<scratch dir>/__pycache__/`, and wherever the gate's
-own interpreter caches -- which differs under `PYTHONPYCACHEPREFIX`, and is
-also where a probe's subprocess caches when it inherits an **absolute**
-prefix from the gate's environment. What the probe still owns: a subprocess
-given a *different* prefix, a *relative* prefix resolved against a different
-working directory, or bytecode copied anywhere else, is invisible to the kit.
-Such a probe removes the whole class rather than the instance by running its
-subprocess with `-B` / `PYTHONDONTWRITEBYTECODE=1`, or with a prefix that is
-fresh for every probe. This repository's own gate, `tools/mutation_gate.py`,
-does the analogous thing for its pytest runs: a fresh prefix per mutation.
+mutant the suite provably detects.
+
+So the kit dates every write of the scratch file with **its own mtime**: a
+run starts at a random second between 2000 and 2020, drawn from the OS rather
+than the `random` module, and adds two seconds per write -- two, because FAT
+and exFAT store mtimes in 2-second steps. A `.pyc` compiled from an earlier
+write *of the scratch file* then fails validation wherever it was cached:
+beside it, under the gate's `PYTHONPYCACHEPREFIX`, or under a prefix the
+probe chose for itself. The kit also still purges `<stem>.*.pyc` from the two
+places it can see: `<scratch dir>/__pycache__/`, and wherever the gate's own
+interpreter caches.
+
+What the probe still owns, because neither the stamp nor the purge reaches it:
+
+- **a probe that sets the scratch file's mtime** undoes the stamp;
+- **a probe that copies or rewrites the source before importing it**: the
+  copy is a different source with a wall-clock mtime, and same-size copies
+  written within one second collide exactly as before -- and so does
+  bytecode copied anywhere else;
+- **a filesystem whose mtimes are coarser than 2 seconds**;
+- **an interpreter told to trust unchecked hash-based `.pyc` files**, which
+  ignores mtimes entirely;
+- **across runs, the stamp is a random draw, not a guarantee.** Within a run
+  each import recompiles over the previous `.pyc`, so what a later run can
+  inherit is the one `.pyc` an earlier run left for the same path. It
+  collides only if the later run's *first* write lands on that `.pyc`'s
+  exact stamp, at the exact size.
+
+A probe that wants none of this to matter runs its subprocess with `-B` /
+`PYTHONDONTWRITEBYTECODE=1`. This
+repository's own gate, `tools/mutation_gate.py`, does the analogous thing
+for its pytest runs: a fresh prefix per mutation.
 
 ## The standard this has to meet
 

@@ -49,8 +49,10 @@ import glob
 import hashlib
 import importlib.util
 import io
+import itertools
 import json
 import os
+import random
 import re
 import subprocess
 import sys
@@ -584,6 +586,17 @@ class GateReport:
         )
 
 
+#: Where a run's scratch-file mtimes start: a random whole second between
+#: 2000-01-01 and 2020-01-01 UTC. In the past, so no write is dated in the
+#: future; random, so a run is unlikely to start on the stamp a previous run
+#: left its `.pyc` at. Drawn from the OS, not the `random` module, so a
+#: caller's `random.seed()` neither fixes it nor has its own sequence consumed.
+_STAMP_RANGE = (946_684_800, 1_577_836_800)
+#: Seconds between consecutive stamps. Two, not one: FAT and exFAT store
+#: mtimes in 2-second steps, where stamps a second apart can be stored equal.
+_STAMP_STEP = 2
+
+
 def gate(
     *,
     source: str | os.PathLike[str],
@@ -612,10 +625,12 @@ def gate(
     in silence; the kit cannot check that. And mind bytecode caching: a `.pyc`
     is validated against the source mtime in WHOLE SECONDS and its size, so
     two mutants of the same size written in the same second can hand the
-    interpreter the previous one. The kit purges the two places it can see
-    (see `_purge_bytecode`); a probe whose interpreter caches anywhere else
-    must defeat caching itself (`PYTHONDONTWRITEBYTECODE=1`), or use a prefix
-    that is fresh for every probe.
+    interpreter the previous one. The kit stamps every write with its own
+    mtime, two seconds after the last, so a `.pyc` compiled from an earlier
+    write OF THE SCRATCH FILE fails validation wherever it was cached, and
+    it also purges the two places it can see (see `_probe`). A probe that
+    resets the file's mtime, or that copies or rewrites the source before
+    importing it -- the copy gets a wall-clock mtime -- is outside both.
     """
     src_path = _anchored(source, "source")
     scratch_path = _anchored(scratch, "scratch")
@@ -641,9 +656,10 @@ def gate(
     with open(src_path, encoding="utf-8", newline="") as handle:
         src = handle.read()
     origin = _sha(src_path)
+    stamps = itertools.count(random.SystemRandom().randrange(*_STAMP_RANGE), _STAMP_STEP)
 
     try:
-        baseline_verdict = _probe(probe, scratch_path, src)
+        baseline_verdict = _probe(probe, scratch_path, src, next(stamps))
         _require_failures_that_ran(baseline_verdict, "the unmutated source")
         if not baseline_verdict.reached:
             raise GateError(
@@ -673,7 +689,7 @@ def gate(
                 report(f"  STALE    {mutant.name:32} {exc}")
                 continue
 
-            verdict = _probe(probe, scratch_path, mutated)
+            verdict = _probe(probe, scratch_path, mutated, next(stamps))
             _require_failures_that_ran(verdict, f"mutant {mutant.name!r}")
             if not verdict.reached:
                 broken.append((mutant.name, "the suite reached no verdict; nothing ran"))
@@ -808,8 +824,8 @@ def _purge_bytecode(path: str) -> None:
     the source found nothing there and said nothing (kindspec/kindkit#11). So
     both places are cleared: the default, and wherever THIS interpreter caches
     -- which is also where a probe's subprocess caches when it inherits the
-    gate's environment. A probe that gives its subprocess a different prefix
-    has to make that prefix fresh per probe; the kit cannot see it.
+    gate's environment. A prefix the probe chose for itself is invisible
+    here; what covers it is the per-write mtime stamp in `_probe`.
     """
     stem = os.path.splitext(os.path.basename(path))[0]
     caches = {
@@ -824,8 +840,17 @@ def _purge_bytecode(path: str) -> None:
                 pass
 
 
-def _probe(probe: Probe, path: str, text: str) -> Verdict:
+def _probe(probe: Probe, path: str, text: str, stamp: int) -> Verdict:
     """Write ``text`` to ``path``, probe it, and prove the bytes did not move.
+
+    The write is dated ``stamp``, which no other write in the run shares. A
+    `.pyc` records the (mtime second, size) of the source it was compiled
+    from, so one compiled from an earlier write of this file no longer
+    validates -- including under a `PYTHONPYCACHEPREFIX` the probe chose and
+    `_purge_bytecode` cannot see (kindspec/kindkit#11). A copy of the file
+    is another source with its own mtime, and the stamp says nothing about
+    it. Fast probes land several writes in one wall-clock second, which is
+    exactly when the real mtime cannot tell them apart.
 
     The hash is taken after the write and again after the probe returns. A
     probe that rewrites, deletes or reformats the file it was handed is
@@ -834,6 +859,7 @@ def _probe(probe: Probe, path: str, text: str) -> Verdict:
     """
     with open(path, "w", encoding="utf-8", newline="") as handle:
         handle.write(text)
+    os.utime(path, (stamp, stamp))
     _purge_bytecode(path)
     before = _sha(path)
     verdict = probe(path)
