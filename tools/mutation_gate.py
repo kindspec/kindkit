@@ -173,6 +173,16 @@ MUTATIONS: tuple[Mutation, ...] = (
         ("tests/test_runner.py::test_two_fixtures_sharing_a_stem_is_a_hard_failure",),
     ),
     Mutation(
+        "a fixture that is not UTF-8 escapes as exit 1, a case failure",
+        RUNNER,
+        'raise FixtureTreeError(f"{cid}: cannot read {name}: {exc}") from exc',
+        "raise",
+        (
+            "tests/test_runner.py::test_a_fixture_that_is_not_utf8_is_a_hard_failure_naming_case_and_file",
+            "tests/test_runner.py::test_a_fixture_that_is_not_utf8_exits_no_verdict_not_a_case_failure",
+        ),
+    ),
+    Mutation(
         "fixtures stop being read as exact bytes",
         RUNNER,
         'with open(os.path.join(dirpath, name), encoding="utf-8", newline="") as handle:',

@@ -87,7 +87,8 @@ alike from the outside:
     2   the fixture tree yielded no verdict at all
 
 An empty root, a missing root, a root that is a file, a manifest that will not
-parse, and — with `--min-cases` — a tree that shrank are all the third thing.
+parse, a fixture that is not UTF-8, and — with `--min-cases` — a tree that
+shrank are all the third thing.
 They raise rather than being counted, so a caller that only counts failures
 cannot turn "nothing ran" into "nothing failed". That is the bug this project
 has now found in its own tooling more times than any other.

@@ -175,6 +175,37 @@ def test_two_fixtures_sharing_a_stem_is_a_hard_failure(tmp_path):
         discover(tmp_path, (".kv", ".kv2"))
 
 
+def _non_utf8_case(tmp_path) -> str:
+    case_dir = tmp_path / "latin1"
+    case_dir.mkdir()
+    (case_dir / "expect.json").write_text('{"kind": "parse", "accept": true}')
+    (case_dir / "input.kv").write_bytes(b"caf\xe9=1\n")
+    return str(tmp_path)
+
+
+def test_a_fixture_that_is_not_utf8_is_a_hard_failure_naming_case_and_file(tmp_path):
+    root = _non_utf8_case(tmp_path)
+    with pytest.raises(FixtureTreeError, match=r"^latin1: cannot read input\.kv: "):
+        discover(root, (".kv",))
+
+
+def test_a_fixture_that_is_not_utf8_exits_no_verdict_not_a_case_failure(tmp_path):
+    # In a fresh process, because the exit code is the contract: a
+    # UnicodeDecodeError escaping `cli.main` exits 1, which says a case failed.
+    root = _non_utf8_case(tmp_path)
+    code = (
+        "import sys, kvkind\n"
+        "from kindkit import cli\n"
+        f"sys.exit(cli.main(kvkind.adapter(kvkind.Good), [{root!r}]))\n"
+    )
+    env = {**os.environ, "PYTHONPATH": os.pathsep.join([REPO_ROOT, os.path.dirname(__file__)])}
+    proc = subprocess.run(
+        [sys.executable, "-c", code], cwd=REPO_ROOT, env=env, capture_output=True, text=True
+    )
+    assert proc.returncode == cli.EXIT_NO_VERDICT, proc.stderr
+    assert "HARD FAILURE: latin1: cannot read input.kv" in proc.stderr
+
+
 # --------------------------------------------------------------------------
 # A case nothing would have run must fail, not be skipped.
 # --------------------------------------------------------------------------

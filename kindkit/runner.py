@@ -214,8 +214,13 @@ def _read_fixtures(
                 raise FixtureTreeError(f"{cid}: two fixtures share the stem {stem!r}")
             # newline="" so no universal-newline translation happens: a case
             # that asserts a CRLF survives a round trip needs the CRLF.
-            with open(os.path.join(dirpath, name), encoding="utf-8", newline="") as handle:
-                files[stem] = handle.read()
+            try:
+                with open(os.path.join(dirpath, name), encoding="utf-8", newline="") as handle:
+                    files[stem] = handle.read()
+            except UnicodeDecodeError as exc:
+                # A ValueError, so it would escape `cli.main` as exit 1 -- "a
+                # case failed" -- when no case was ever opened.
+                raise FixtureTreeError(f"{cid}: cannot read {name}: {exc}") from exc
             break
     return files
 
