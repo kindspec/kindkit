@@ -191,3 +191,80 @@ def test_a_failing_id_the_probe_did_not_run_is_a_hard_failure(tmp_path, when):
             scratch=str(tmp_path / "scratch_impl.py"),
             report=lambda _m: None,
         )
+
+
+def test_a_mutant_that_ran_different_cases_is_broken_not_equivalent(tmp_path):
+    """Cases that did not run cannot vouch for an equivalence claim."""
+    source = _kv_copy(tmp_path)
+    calls = []
+
+    def probe(path: str) -> Verdict:
+        calls.append(path)
+        return Verdict(ran={"a", "b", "c"} if len(calls) == 1 else {"c"})
+
+    report = gate(
+        source=source,
+        mutants=[Mutant("no-equals", *NO_EQUALS_CHECK, equivalent="claimed inert")],
+        probe=probe,
+        scratch=str(tmp_path / "scratch_impl.py"),
+        report=lambda _m: None,
+    )
+    assert report.equivalent == ()
+    assert [name for name, _ in report.broken] == ["no-equals"]
+
+
+def test_a_report_path_that_cannot_be_written_is_no_verdict_not_a_failure(tmp_path):
+    from kvkind import Good, adapter
+
+    directory = tmp_path / "is-a-directory"
+    directory.mkdir()
+    assert cli.main(adapter(Good), [KV_TREE, "--report-json", str(directory)]) == (
+        cli.EXIT_NO_VERDICT
+    )
+    missing_parent = tmp_path / "no" / "such" / "dir" / "report.json"
+    assert cli.main(adapter(Good), [KV_TREE, "--report-json", str(missing_parent)]) == (
+        cli.EXIT_NO_VERDICT
+    )
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        "{oops",
+        "[]",
+        f'{{"{REPORT_FORMAT_KEY}": {REPORT_FORMAT}, "cases": "ab", "failures": []}}',
+        f'{{"{REPORT_FORMAT_KEY}": {REPORT_FORMAT}, "cases": [1, 2], "failures": []}}',
+        f'{{"{REPORT_FORMAT_KEY}": {REPORT_FORMAT}, "cases": ["x", "x"], "failures": []}}',
+        f'{{"{REPORT_FORMAT_KEY}": {REPORT_FORMAT}, "cases": ["a"]}}',
+        f'{{"{REPORT_FORMAT_KEY}": {REPORT_FORMAT}, "cases": ["a"], "failures": ["a"]}}',
+    ],
+    ids=[
+        "not-json",
+        "not-object",
+        "cases-string",
+        "cases-ints",
+        "cases-dup",
+        "no-failures",
+        "bare-ids",
+    ],
+)
+def test_a_malformed_report_is_refused_by_name(tmp_path, body):
+    writer = tmp_path / "writer.py"
+    writer.write_text(
+        "import sys\n"
+        "path = sys.argv[sys.argv.index('--report-json') + 1]\n"
+        f"open(path, 'w').write({body!r})\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(GateError, match="malformed report"):
+        probe_command([sys.executable, str(writer)])
+
+
+def test_no_verdict_says_what_the_runner_said(tmp_path, capsys):
+    loud = tmp_path / "loud.py"
+    loud.write_text(
+        "import sys\nprint('the fixture root is gone', file=sys.stderr)\nsys.exit(2)\n",
+        encoding="utf-8",
+    )
+    assert probe_command([sys.executable, str(loud)]) == Verdict.none()
+    assert "the fixture root is gone" in capsys.readouterr().err

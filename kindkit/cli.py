@@ -63,19 +63,20 @@ def main(
         help="also write the verdict as JSON to PATH; no verdict, no file",
     )
     args = parser.parse_args(argv)
-    if args.report_json is not None and os.path.lexists(args.report_json):
-        os.remove(args.report_json)
 
     try:
+        if args.report_json is not None and os.path.lexists(args.report_json):
+            os.remove(args.report_json)
         report = run(adapter, args.root, min_cases=args.min_cases)
-    except FixtureTreeError as exc:
-        # Not "0 failures". Nothing was checked, so there is no number to give.
+        print(f"\n{report.summary()}")
+        if args.report_json is not None:
+            _write_atomically(args.report_json, json.dumps(report.to_json(), indent=1) + "\n")
+    except (FixtureTreeError, OSError) as exc:
+        # Not "0 failures". Nothing was checked -- or the verdict could not be
+        # delivered where it was asked for -- so there is no number to give,
+        # and exit 1 would claim a case failed.
         print(f"\nHARD FAILURE: {exc}", file=sys.stderr)
         return EXIT_NO_VERDICT
-
-    print(f"\n{report.summary()}")
-    if args.report_json is not None:
-        _write_atomically(args.report_json, json.dumps(report.to_json(), indent=1) + "\n")
     return EXIT_OK if report.ok else EXIT_FAILURES
 
 

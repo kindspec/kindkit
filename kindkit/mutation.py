@@ -59,6 +59,9 @@ import tokenize
 from collections.abc import Callable, Collection, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 
+from kindkit.cli import EXIT_FAILURES, EXIT_OK
+from kindkit.runner import REPORT_FORMAT, REPORT_FORMAT_KEY
+
 #: Passed as a mutant's ``mode`` to patch every occurrence of the pattern
 #: rather than requiring it to identify exactly one. Ambiguity is a hard
 #: failure by default, because a mutant that lands on the wrong line is worse
@@ -467,9 +470,6 @@ def probe_command(
     with. Each means the run measured something other than the suite, and none
     of them is a kill.
     """
-    from kindkit.cli import EXIT_FAILURES, EXIT_OK
-    from kindkit.runner import REPORT_FORMAT, REPORT_FORMAT_KEY
-
     with tempfile.TemporaryDirectory(prefix="kindkit-probe-") as scratch:
         path = os.path.join(scratch, "report.json")
         try:
@@ -487,18 +487,58 @@ def probe_command(
             print(f"  TIMEOUT  the suite did not finish within {timeout}s", file=sys.stderr)
             return Verdict.none()
         if done.returncode not in (EXIT_OK, EXIT_FAILURES) or not os.path.exists(path):
+            _say_why(done, "wrote no report")
             return Verdict.none()
         with open(path, encoding="utf-8") as handle:
-            data = json.load(handle)
+            text = handle.read()
+    ran, failures = _parse_report(text)
+    if (done.returncode == EXIT_FAILURES) != bool(failures):
+        _say_why(done, f"exited {done.returncode} with {len(failures)} failure(s) in its report")
+        return Verdict.none()
+    return Verdict(ran=ran, failures=failures)
+
+
+def _say_why(done: subprocess.CompletedProcess[str], what: str) -> None:
+    # BROKEN will say "nothing ran". The runner usually said why -- an import
+    # traceback, a HARD FAILURE line -- and dropping that leaves only a guess.
+    print(f"  NO VERDICT  the runner {what} (exit {done.returncode})", file=sys.stderr)
+    for line in done.stderr.strip().splitlines()[-20:]:
+        print(f"    | {line}", file=sys.stderr)
+
+
+def _parse_report(text: str) -> tuple[frozenset[str], frozenset[str]]:
+    """``(ran, failing ids)`` from a ``--report-json`` file, or a GateError.
+
+    A report the kit cannot read is not "no verdict" -- the runner claimed one
+    -- and must not be read loosely either: ``"cases": "ab"`` iterates as two
+    case ids, and a duplicated id would count once.
+    """
+
+    def bad(why: str) -> GateError:
+        return GateError(f"the runner wrote a malformed report: {why}")
+
+    try:
+        data = json.loads(text)
+    except json.JSONDecodeError as exc:
+        raise bad(f"not JSON ({exc})") from exc
+    if not isinstance(data, dict):
+        raise bad("not a JSON object")
     if data.get(REPORT_FORMAT_KEY) != REPORT_FORMAT:
         raise GateError(
             f"the runner wrote report format {data.get(REPORT_FORMAT_KEY)!r}; "
             f"this kit reads format {REPORT_FORMAT}"
         )
-    failures = frozenset(failure["id"] for failure in data["failures"])
-    if (done.returncode == EXIT_FAILURES) != bool(failures):
-        return Verdict.none()
-    return Verdict(ran=frozenset(data["cases"]), failures=failures)
+    cases, failures = data.get("cases"), data.get("failures")
+    if not isinstance(cases, list) or not all(isinstance(cid, str) for cid in cases):
+        raise bad("'cases' is not a list of case ids")
+    if len(set(cases)) != len(cases):
+        raise bad("'cases' names a case more than once")
+    if not isinstance(failures, list) or not all(
+        isinstance(f, dict) and isinstance(f.get("id"), str) and isinstance(f.get("message"), str)
+        for f in failures
+    ):
+        raise bad("'failures' is not a list of {id, message} objects")
+    return frozenset(cases), frozenset(f["id"] for f in failures)
 
 
 @dataclass(frozen=True)
@@ -597,6 +637,7 @@ def gate(
                 "mutant would score as caught by a suite that never ran"
             )
         baseline = frozenset(baseline_verdict.failures)
+        baseline_ran = frozenset(baseline_verdict.ran)
         if baseline:
             report(f"  BASELINE the reference already fails {len(baseline)} case(s):")
             for cid in sorted(baseline):
@@ -623,6 +664,13 @@ def gate(
             if not verdict.reached:
                 broken.append((mutant.name, "the suite reached no verdict; nothing ran"))
                 report(f"  BROKEN   {mutant.name:32} no verdict: nothing ran, so nothing caught it")
+                continue
+            if frozenset(verdict.ran) != baseline_ran:
+                # A case that did not run cannot have caught the mutant, nor
+                # vouched for an equivalence claim. Fewer cases is the shape of
+                # a collection error; more is a different suite.
+                broken.append((mutant.name, "the suite ran different cases than on the baseline"))
+                report(f"  BROKEN   {mutant.name:32} ran different cases than the baseline did")
                 continue
 
             caught = tuple(sorted(frozenset(verdict.failures) - baseline))

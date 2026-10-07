@@ -99,6 +99,21 @@ so its absence means the same as exit 2, and a file already at `PATH` is
 removed before the run. The printed summary is prose for people and may change;
 read this instead.
 
+A runner not built on `kindkit.cli` can still be probed with `probe_command` if
+it keeps to the same contract:
+
+- it accepts `--report-json PATH` as the **last two arguments** and writes the
+  file there, and nothing there if it has no verdict;
+- `kindkit_report` is `1`; a reader refuses any other value rather than guess;
+- `cases` is a list of **unique strings**, each a case directory's path
+  relative to the fixture root with `/` separators; an empty list is no
+  verdict, because a tree with no cases is an error, not a pass;
+- `failures` is a list of `{"id": str, "message": str}`; every `id` must be in
+  `cases`, and `message` is free text for people;
+- it exits **1 exactly when `failures` is non-empty**, 0 when it is empty, and
+  2 with no file when there is no verdict. A report the exit code contradicts
+  is discarded as no verdict.
+
 ## Using the gate
 
 The other half of the same idea: the runner asks whether an implementation

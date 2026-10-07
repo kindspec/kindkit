@@ -261,7 +261,9 @@ def test_a_mutant_that_leaves_the_suite_with_no_verdict_is_broken_not_killed(tmp
     the number is right.
     """
     report = run_gate([Mutant("unimportable", *UNIMPORTABLE), killer()], tmp_path=tmp_path)
-    assert [name for name, _ in report.broken] == ["unimportable"]
+    # The reason, not just the bucket: "nothing ran" is a crash to go and find,
+    # where "ran different cases" is a different suite. Both are BROKEN.
+    assert report.broken == (("unimportable", "the suite reached no verdict; nothing ran"),)
     assert report.killed == ("refuses-no-equals",)
     assert not report.ok
 
