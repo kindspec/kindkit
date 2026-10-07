@@ -174,6 +174,36 @@ MUTATIONS: tuple[Mutation, ...] = (
         ("tests/test_runner.py::test_two_fixtures_sharing_a_stem_is_a_hard_failure",),
     ),
     Mutation(
+        "a fixture that is not UTF-8 escapes as exit 1, a case failure",
+        RUNNER,
+        'raise FixtureTreeError(f"{cid}: cannot read {name}: {exc}") from exc',
+        "raise",
+        (
+            "tests/test_runner.py::test_a_fixture_that_is_not_utf8_is_a_hard_failure_naming_case_and_file",
+            "tests/test_runner.py::test_a_fixture_that_is_not_utf8_exits_no_verdict_not_a_case_failure",
+        ),
+    ),
+    Mutation(
+        "a manifest that is not UTF-8 escapes as exit 1, a case failure",
+        RUNNER,
+        "except (OSError, json.JSONDecodeError, UnicodeDecodeError) as exc:",
+        "except (OSError, json.JSONDecodeError) as exc:",
+        (
+            "tests/test_runner.py::test_a_manifest_that_is_not_utf8_is_a_hard_failure_naming_case_and_file",
+            "tests/test_runner.py::test_a_manifest_that_is_not_utf8_exits_no_verdict_not_a_case_failure",
+        ),
+    ),
+    Mutation(
+        "the validator tracebacks on a manifest that is not UTF-8",
+        VALIDATOR,
+        "except (OSError, json.JSONDecodeError, UnicodeDecodeError, NotRFC8259) as exc:",
+        "except (OSError, json.JSONDecodeError, NotRFC8259) as exc:",
+        (
+            "tests/test_case_schema.py::"
+            "test_a_manifest_that_is_not_utf8_is_reported_invalid_not_a_traceback",
+        ),
+    ),
+    Mutation(
         "fixtures stop being read as exact bytes",
         RUNNER,
         'with open(os.path.join(dirpath, name), encoding="utf-8", newline="") as handle:',

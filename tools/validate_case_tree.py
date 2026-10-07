@@ -138,7 +138,7 @@ def _validate_case(
     path = os.path.join(dirpath, CASE_MANIFEST)
     try:
         expect = read_manifest(path)
-    except (OSError, json.JSONDecodeError, NotRFC8259) as exc:
+    except (OSError, json.JSONDecodeError, UnicodeDecodeError, NotRFC8259) as exc:
         return out + [f"{cid}: cannot read {CASE_MANIFEST}: {exc}"]
 
     for message in envelope.errors(expect, CASE_MANIFEST):
