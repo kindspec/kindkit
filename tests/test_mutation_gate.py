@@ -17,6 +17,7 @@ mutation credited with a different mutation's verdict.
 
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 import sys
@@ -101,3 +102,36 @@ def test_run_tests_sees_the_source_on_disk_not_the_cached_bytecode(probe, monkey
         "the second run executed the first run's bytecode: a mutation would be "
         "credited with the verdict of whichever one ran before it"
     )
+
+
+# --------------------------------------------------------------------------
+# A byte splice must be held to what `compile()` holds a token splice to.
+# --------------------------------------------------------------------------
+
+
+def _schema() -> str:
+    with open(os.path.join(mutation_gate.ROOT, mutation_gate.SCHEMA), encoding="utf-8") as handle:
+        return handle.read()
+
+
+def test_a_byte_splice_that_breaks_the_json_is_refused_not_scored():
+    # Scored, this is a kill credited to a parse error: the suite falls over on
+    # an unreadable schema and the gate cannot tell that from noticing the
+    # semantic change the mutation was written to make (kindspec/kindkit#10).
+    broken = mutation_gate.Mutation(
+        "syntax break", mutation_gate.SCHEMA, '"required": ["kind"],', '"required": ["kind",,', ()
+    )
+    with pytest.raises(mutation_gate.MutantError, match="does not parse"):
+        mutation_gate._splice(broken, _schema())
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [m for m in mutation_gate.MUTATIONS if m.path.endswith(".json")],
+    ids=lambda m: m.label,
+)
+def test_every_json_mutation_in_the_gate_still_parses(mutation):
+    # The other direction: the refusal must not cost a real mutation, so a
+    # kill scored on one of these is a kill on the change it names.
+    with open(os.path.join(mutation_gate.ROOT, mutation.path), encoding="utf-8") as handle:
+        json.loads(mutation_gate._splice(mutation, handle.read()))
