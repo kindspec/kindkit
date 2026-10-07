@@ -75,6 +75,7 @@ EVALUATOR = "tools/jsonschema_min.py"
 
 T_MUT = "tests/test_mutation.py::"
 T_REP = "tests/test_report.py::"
+T_GIT_CALL = "tests/test_gitmerge.py::test_a_git_call_that_fails_raises_rather_than_being_ignored"
 
 MUTATIONS: tuple[Mutation, ...] = (
     Mutation(
@@ -270,6 +271,79 @@ MUTATIONS: tuple[Mutation, ...] = (
             "tests/test_gitmerge.py::test_competing_edits_conflict_and_the_markers_are_handed_back",
             "tests/test_runner.py::test_a_conforming_implementation_passes_every_case",
         ),
+    ),
+    Mutation(
+        "a merge that failed without a conflict is reported as one",
+        GITMERGE,
+        '            if _must(env, "ls-files", "-u", cwd=workdir).stdout:',
+        "            if True:",
+        (
+            "tests/test_gitmerge.py::"
+            "test_a_merge_that_fails_without_a_conflict_raises_rather_than_reporting_one",
+        ),
+    ),
+    Mutation(
+        "a git call that failed is ignored",
+        GITMERGE,
+        "    if done.returncode:",
+        "    if False:",
+        tuple(
+            f"{T_GIT_CALL}[{site}]"
+            for site in (
+                "config",
+                "add",
+                "branch",
+                "checkout-main",
+                "checkout-branch",
+                "checkout-before-merge",
+            )
+        ),
+    ),
+    # One per call site: the guard above can be intact while a site stops
+    # using it, which is how these calls came to be ignored in the first place.
+    Mutation(
+        "a failed git config is ignored",
+        GITMERGE,
+        '_must(env, "config", key, value, cwd=workdir)',
+        '_git(env, "config", key, value, cwd=workdir)',
+        (T_GIT_CALL + "[config]",),
+    ),
+    Mutation(
+        "a failed git add is ignored",
+        GITMERGE,
+        '_must(env, "add", "-A", cwd=workdir)',
+        '_git(env, "add", "-A", cwd=workdir)',
+        (T_GIT_CALL + "[add]",),
+    ),
+    Mutation(
+        "a failed git branch is ignored",
+        GITMERGE,
+        '_must(env, "branch", "-M", "main", cwd=workdir)',
+        '_git(env, "branch", "-M", "main", cwd=workdir)',
+        (T_GIT_CALL + "[branch]",),
+    ),
+    Mutation(
+        "a failed checkout of main before branching is ignored",
+        GITMERGE,
+        '_must(env, "checkout", "-q", "main", cwd=workdir)\n'
+        '_must(env, "checkout", "-qb", f"b{index}", cwd=workdir)',
+        '_git(env, "checkout", "-q", "main", cwd=workdir)\n'
+        '_must(env, "checkout", "-qb", f"b{index}", cwd=workdir)',
+        (T_GIT_CALL + "[checkout-main]",),
+    ),
+    Mutation(
+        "a failed checkout of a new branch is ignored",
+        GITMERGE,
+        '_must(env, "checkout", "-qb", f"b{index}", cwd=workdir)',
+        '_git(env, "checkout", "-qb", f"b{index}", cwd=workdir)',
+        (T_GIT_CALL + "[checkout-branch]",),
+    ),
+    Mutation(
+        "a failed checkout of main before merging is ignored",
+        GITMERGE,
+        '_must(env, "checkout", "-q", "main", cwd=workdir)\nfor index in range(len(branches)):',
+        '_git(env, "checkout", "-q", "main", cwd=workdir)\nfor index in range(len(branches)):',
+        (T_GIT_CALL + "[checkout-before-merge]",),
     ),
     Mutation(
         "the developer's HOME reaches the merge",
