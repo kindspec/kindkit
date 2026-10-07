@@ -108,5 +108,9 @@ def test_a_gate_that_exits_non_zero_fails_whatever_its_report_says():
     assert check_gate.check_gate(KV_TREE, _fake(None, exit_code=1)) == 1
 
 
-def test_an_empty_tree_is_no_verdict(tmp_path):
-    assert check_gate.check_gate(str(tmp_path), _fake(_report())) == 2
+@pytest.mark.parametrize("missing", [False, True], ids=["empty", "missing"])
+def test_an_empty_or_missing_tree_is_no_verdict(tmp_path, missing):
+    # The report names THIS root and its one case, so only the tree check
+    # can refuse it.
+    root = str(tmp_path / "nowhere") if missing else str(tmp_path)
+    assert check_gate.check_gate(root, _fake(_report(ran=["x"], root=root))) == 2

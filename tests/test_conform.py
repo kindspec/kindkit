@@ -83,11 +83,14 @@ def test_a_suite_that_ran_a_case_outside_the_tree_is_no_verdict():
 
 
 def test_an_empty_tree_is_no_verdict_whatever_the_suite_says(tmp_path):
-    assert conform.conform(str(tmp_path), _fake(_report(["x"]), 0)) == 2
+    # The report names THIS root, so only the tree check can refuse it.
+    root = str(tmp_path)
+    assert conform.conform(root, _fake(_report(["x"], root=root), 0)) == 2
 
 
 def test_a_missing_tree_is_no_verdict(tmp_path):
-    assert conform.conform(str(tmp_path / "nowhere"), _fake(_report(["x"]), 0)) == 2
+    root = str(tmp_path / "nowhere")
+    assert conform.conform(root, _fake(_report(["x"], root=root), 0)) == 2
 
 
 def test_a_suite_that_writes_no_report_is_no_verdict():

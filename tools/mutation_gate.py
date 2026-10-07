@@ -673,8 +673,8 @@ MUTATIONS: tuple[Mutation, ...] = (
     Mutation(
         "an old report survives a run that found no verdict",
         CLI,
-        "        os.remove(args.report_json)",
-        "        pass",
+        "            os.remove(report_path)",
+        "            pass",
         (T_REP + "test_no_verdict_writes_no_report_and_removes_an_old_one",),
     ),
     Mutation(
@@ -1136,6 +1136,16 @@ MUTATIONS: tuple[Mutation, ...] = (
         tuple(
             T_GATE + f"test_a_command_that_exits_zero_without_a_gate_is_no_verdict[{c}]"
             for c in ("true", "empty", "blank", "no-report")
+        ),
+    ),
+    Mutation(
+        "the gate is checked against an empty or missing tree",
+        CHECK_GATE,
+        "    except TreeError as exc:\n        return _say(2, str(exc))",
+        "    except TreeError:\n        tree = {'x'}",
+        (
+            T_GATE + "test_an_empty_or_missing_tree_is_no_verdict[empty]",
+            T_GATE + "test_an_empty_or_missing_tree_is_no_verdict[missing]",
         ),
     ),
     Mutation(
