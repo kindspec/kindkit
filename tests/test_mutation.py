@@ -257,7 +257,7 @@ def test_a_mutant_that_leaves_the_suite_with_no_verdict_is_broken_not_killed(tmp
     Every case goes unopened, so no case detected anything -- and a gate that
     counts that as a kill is reporting on a suite it never ran. rowspec's gate
     once did (kindspec/rowspec#45: its `<runner crashed>` sentinel was a member
-    of the failing set), until it moved onto this kit and `probe_command`.
+    of the failing set), until it moved onto this kit (kindspec/rowspec#46).
     """
     report = run_gate([Mutant("unimportable", *UNIMPORTABLE), killer()], tmp_path=tmp_path)
     # The reason, not just the bucket: "nothing ran" is a crash to go and find,
