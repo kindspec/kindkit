@@ -74,6 +74,7 @@ VALIDATOR = "tools/validate_case_tree.py"
 EVALUATOR = "tools/jsonschema_min.py"
 
 T_MUT = "tests/test_mutation.py::"
+T_REP = "tests/test_report.py::"
 
 MUTATIONS: tuple[Mutation, ...] = (
     Mutation(
@@ -549,6 +550,72 @@ MUTATIONS: tuple[Mutation, ...] = (
             T_MUT
             + "test_a_mutant_is_never_served_the_previous_probes_bytecode[child-inherits-prefix]",
         ),
+    ),
+    Mutation(
+        "a baseline failing id that never ran is accepted",
+        MUTATION,
+        '        _require_failures_that_ran(baseline_verdict, "the unmutated source")',
+        "        pass",
+        (T_REP + "test_a_failing_id_the_probe_did_not_run_is_a_hard_failure[baseline]",),
+    ),
+    Mutation(
+        "a mutant's failing id that never ran scores a kill",
+        MUTATION,
+        '            _require_failures_that_ran(verdict, f"mutant {mutant.name!r}")',
+        "            pass",
+        (T_REP + "test_a_failing_id_the_probe_did_not_run_is_a_hard_failure[mutant]",),
+    ),
+    Mutation(
+        "the ran-set check compares nothing",
+        MUTATION,
+        "    stray = sorted(frozenset(verdict.failures) - frozenset(verdict.ran))",
+        "    stray = []",
+        (
+            T_REP + "test_a_failing_id_the_probe_did_not_run_is_a_hard_failure[baseline]",
+            T_REP + "test_a_failing_id_the_probe_did_not_run_is_a_hard_failure[mutant]",
+        ),
+    ),
+    Mutation(
+        "a positional Verdict is read as the set that ran",
+        MUTATION,
+        "@dataclass(frozen=True, kw_only=True)",
+        "@dataclass(frozen=True, kw_only=False)",
+        (T_REP + "test_a_positional_verdict_is_refused",),
+    ),
+    Mutation(
+        "a verdict that ran nothing still counts as reached",
+        MUTATION,
+        "        return bool(self.ran)",
+        "        return True",
+        (T_MUT + "test_no_verdict_on_the_unmutated_source_is_a_hard_failure",),
+    ),
+    Mutation(
+        "an old report survives a run that found no verdict",
+        CLI,
+        "        os.remove(args.report_json)",
+        "        pass",
+        (T_REP + "test_no_verdict_writes_no_report_and_removes_an_old_one",),
+    ),
+    Mutation(
+        "a report its exit code contradicts is believed",
+        MUTATION,
+        "    if (done.returncode == EXIT_FAILURES) != bool(failures):",
+        "    if False:",
+        (T_REP + "test_a_report_its_exit_code_disagrees_with_is_no_verdict",),
+    ),
+    Mutation(
+        "a report in an unknown format is read as this one",
+        MUTATION,
+        "    if data.get(REPORT_FORMAT_KEY) != REPORT_FORMAT:",
+        "    if False:",
+        (T_REP + "test_a_report_in_an_unknown_format_is_refused",),
+    ),
+    Mutation(
+        "a run that wrote no report is read anyway",
+        MUTATION,
+        "        if done.returncode not in (EXIT_OK, EXIT_FAILURES) or not os.path.exists(path):",
+        "        if done.returncode not in (EXIT_OK, EXIT_FAILURES):",
+        (T_REP + "test_an_implementation_that_will_not_import_is_no_verdict",),
     ),
     Mutation(
         "the scratch file may be the implementation, which the run then deletes",

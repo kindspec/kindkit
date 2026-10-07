@@ -87,26 +87,35 @@ They raise rather than being counted, so a caller that only counts failures
 cannot turn "nothing ran" into "nothing failed". That is the bug this project
 has now found in its own tooling more times than any other.
 
+`--report-json PATH` also writes the verdict for a program to read, versioned
+by its `kindkit_report` key:
+
+```json
+{"kindkit_report": 1, "cases": ["parse/ok", "merge/x"], "failures": [{"id": "merge/x", "message": "..."}]}
+```
+
+`cases` lists what **ran**. The file is written only when there is a verdict,
+so its absence means the same as exit 2, and a file already at `PATH` is
+removed before the run. The printed summary is prose for people and may change;
+read this instead.
+
 ## Using the gate
 
 The other half of the same idea: the runner asks whether an implementation
 passes the cases, and the gate asks whether the cases could ever have failed
 it. A kind supplies the **source file** to break, the **mutants**, and a
 **probe** that runs its suite against a given file and says which case ids
-failed.
+ran and which failed.
 
 ```python
-from kindkit import Mutant, Verdict, gate
+from kindkit import Mutant, gate, probe_command
 
 HERE = os.path.dirname(os.path.abspath(__file__))  # anchored, not the cwd
 
 
 def probe(path):
     """Run MY suite against the implementation in `path`."""
-    result = subprocess.run([sys.executable, RUNNER, path], capture_output=True, text=True)
-    if "case(s) in the fixture tree" not in result.stdout:
-        return Verdict(reached=False)  # it crashed: nothing ran, so nothing caught it
-    return Verdict({line.split()[1] for line in result.stdout.splitlines() if " FAIL " in line})
+    return probe_command([sys.executable, RUNNER, path], cwd=HERE, timeout=300)
 
 
 report = gate(
@@ -146,10 +155,19 @@ that outlived its mutant and was ignored in silence). `from_table` is the
 migration path for a gate already written as a table, and it refuses the
 orphan.
 
-**`Verdict(reached=False)` is not a kill.** The mutation may well be what
-crashed the suite -- but no case caught it, because no case ran. That
-distinction is the one the kit's own gate had to be taught: scoring any
-non-zero pytest exit as "caught" counts an unimportable module as a kill.
+**`probe_command`** runs a runner built on `kindkit.cli.main` in a fresh
+interpreter and reads back its `--report-json`, from a path created for that
+call alone so no earlier report can be read as this one. A timeout, an exit
+code other than 0 or 1, a missing report, or a report its exit code
+contradicts all come back as `Verdict.none()`. A probe that cannot use it builds
+`Verdict(ran=..., failures=...)` itself; both are keyword-only.
+
+**`Verdict.none()` is not a kill.** The mutation may well be what crashed the
+suite -- but no case caught it, because no case ran. That distinction is the
+one the kit's own gate had to be taught: scoring any non-zero pytest exit as
+"caught" counts an unimportable module as a kill. And **a failing id the probe
+did not also report as run is a hard failure**: a crash sentinel in the failing
+set would otherwise score a kill no case made.
 
 `source` is never written to. Both paths must be absolute, and both are
 hashed: the implementation across the whole run, the scratch file across each

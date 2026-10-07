@@ -12,11 +12,18 @@ must never look alike from the outside:
     0   every case passed
     1   at least one case failed -- a verdict about the implementation
     2   the fixture tree yielded no verdict at all
+
+``--report-json PATH`` also writes the verdict for a program to read (see
+``Report.to_json``). It is written only when there IS a verdict, so a missing
+file means the same as exit 2, and a file already at PATH is removed before
+the run so that a crash cannot leave an older run's verdict in its place.
 """
 
 from __future__ import annotations
 
 import argparse
+import json
+import os
 import sys
 from collections.abc import Sequence
 
@@ -50,7 +57,14 @@ def main(
         metavar="N",
         help="fail if fewer than N cases are discovered; guards a tree that shrank",
     )
+    parser.add_argument(
+        "--report-json",
+        metavar="PATH",
+        help="also write the verdict as JSON to PATH; no verdict, no file",
+    )
     args = parser.parse_args(argv)
+    if args.report_json is not None and os.path.lexists(args.report_json):
+        os.remove(args.report_json)
 
     try:
         report = run(adapter, args.root, min_cases=args.min_cases)
@@ -60,4 +74,14 @@ def main(
         return EXIT_NO_VERDICT
 
     print(f"\n{report.summary()}")
+    if args.report_json is not None:
+        _write_atomically(args.report_json, json.dumps(report.to_json(), indent=1) + "\n")
     return EXIT_OK if report.ok else EXIT_FAILURES
+
+
+def _write_atomically(path: str, text: str) -> None:
+    # A reader must never see half a report: write beside it, then rename.
+    partial = f"{path}.partial"
+    with open(partial, "w", encoding="utf-8") as handle:
+        handle.write(text)
+    os.replace(partial, path)

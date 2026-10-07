@@ -71,8 +71,8 @@ def kv_probe(path: str) -> Verdict:
     except Exception:
         # An implementation that will not import, or a tree that yields
         # nothing, is the ABSENCE of a verdict. It is not a kill.
-        return Verdict(reached=False)
-    return Verdict({failure.split(": ", 1)[0] for failure in report.failures})
+        return Verdict.none()
+    return Verdict(ran=report.ran, failures={cid for cid, _ in report.failed})
 
 
 #: A mutant the kv tree reliably kills. Paired with the mutant under test
@@ -118,7 +118,7 @@ def test_a_kill_is_a_case_that_fails_ONLY_under_the_mutant(tmp_path):
     already = "parse/refuses-an-entry-with-no-equals"
 
     def probe(path: str) -> Verdict:
-        return Verdict({already})
+        return Verdict(ran={already}, failures={already})
 
     report = run_gate(
         [Mutant("refuses-no-equals", *REFUSES_NO_EQUALS)], probe=probe, tmp_path=tmp_path
@@ -271,7 +271,7 @@ def test_no_verdict_on_the_unmutated_source_is_a_hard_failure(tmp_path):
     with pytest.raises(GateError, match="UNMUTATED"):
         run_gate(
             [Mutant("refuses-no-equals", *REFUSES_NO_EQUALS)],
-            probe=lambda path: Verdict(reached=False),
+            probe=lambda path: Verdict.none(),
             tmp_path=tmp_path,
         )
 
@@ -300,7 +300,7 @@ def test_a_probe_that_rewrites_what_it_was_handed_is_a_hard_failure(tmp_path):
     def probe(path: str) -> Verdict:
         with open(path, "a", encoding="utf-8") as handle:
             handle.write("\n# tidied\n")
-        return Verdict(())
+        return Verdict(ran={"a-case"})
 
     with pytest.raises(GateError, match="rewrote"):
         run_gate([Mutant("refuses-no-equals", *REFUSES_NO_EQUALS)], probe=probe, tmp_path=tmp_path)
@@ -309,7 +309,7 @@ def test_a_probe_that_rewrites_what_it_was_handed_is_a_hard_failure(tmp_path):
 def test_a_probe_that_deletes_what_it_was_handed_is_a_hard_failure(tmp_path):
     def probe(path: str) -> Verdict:
         os.remove(path)
-        return Verdict(())
+        return Verdict(ran={"a-case"})
 
     with pytest.raises(GateError, match="deleted"):
         run_gate([Mutant("refuses-no-equals", *REFUSES_NO_EQUALS)], probe=probe, tmp_path=tmp_path)
@@ -403,7 +403,7 @@ def test_a_mutant_is_never_served_the_previous_probes_bytecode(
     def probe(path: str) -> Verdict:
         # Every write looks to the loader like it happened in the same second.
         os.utime(path, (1_700_000_000, 1_700_000_000))
-        return Verdict({"mark"} if load(path) != "aaa" else ())
+        return Verdict(ran={"mark"}, failures={"mark"} if load(path) != "aaa" else ())
 
     report = gate(
         source=str(source),
@@ -444,7 +444,7 @@ def test_an_implementation_that_changes_under_the_gate_is_a_hard_failure(tmp_pat
     def probe(path: str) -> Verdict:
         with open(source, "a", encoding="utf-8") as handle:
             handle.write("\n# somebody else was here\n")
-        return Verdict(())
+        return Verdict(ran={"a-case"})
 
     with pytest.raises(GateError, match="changed under the gate"):
         run_gate(

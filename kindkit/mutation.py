@@ -48,8 +48,12 @@ import glob
 import hashlib
 import importlib.util
 import io
+import json
 import os
 import re
+import subprocess
+import sys
+import tempfile
 import textwrap
 import tokenize
 from collections.abc import Callable, Collection, Iterable, Mapping, Sequence
@@ -396,29 +400,105 @@ def from_table(
     return tuple(built)
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, kw_only=True)
 class Verdict:
     """What a suite reported about one implementation.
+
+    ``ran`` is the SET OF CASE IDS the suite actually ran. It is required, and
+    it is what "the suite reached a verdict" is decided from: empty means the
+    suite produced no verdict at all -- it crashed, it found no cases, the
+    module under test would not import. That is NOT a kill. The mutation may
+    well be why it crashed, but no case caught it, and a gate that scores it as
+    caught is reporting on a suite it never ran. ``Verdict.none()`` says so.
 
     ``failures`` is the SET OF CASE IDS that failed, not a count. A count
     proves nothing: a suite that runs ahead of its implementation fails some
     cases already, so "the mutant made 7 cases fail" is only a kill once you
-    know those 7 are not the same 7 that fail without it.
+    know those 7 are not the same 7 that fail without it. Every failing id must
+    be one of ``ran``; the gate refuses a probe that reports anything else,
+    which is what stops a ``<runner crashed>`` sentinel from scoring a kill
+    (kindspec/kindkit#8).
 
-    ``reached`` is the other half, and the half that is easy to omit. False
-    means the suite produced no verdict at all -- it crashed, it found no
-    cases, the module under test would not import. That is NOT a kill. The
-    mutation may well be why it crashed, but no case caught it, and a gate
-    that scores it as caught is reporting on a suite it never ran.
+    Keyword-only on purpose: the fields used to be ``(failures, reached)``,
+    and a positional ``Verdict(failing_ids)`` written against that shape must
+    fail loudly rather than be read as the set of cases that ran.
     """
 
+    ran: Collection[str]
     failures: Collection[str] = ()
-    reached: bool = True
+
+    @property
+    def reached(self) -> bool:
+        return bool(self.ran)
+
+    @classmethod
+    def none(cls) -> Verdict:
+        """No verdict: nothing ran, so nothing can have caught anything."""
+        return cls(ran=())
 
 
 #: Given the path of a file holding the implementation source, run the suite
 #: against it and report the verdict. Everything a kind knows lives in here.
 Probe = Callable[[str], Verdict]
+
+
+def probe_command(
+    argv: Sequence[str],
+    *,
+    cwd: str | None = None,
+    env: Mapping[str, str] | None = None,
+    timeout: float | None = None,
+) -> Verdict:
+    """Run a kind's runner in a fresh interpreter and read back its verdict.
+
+    ``argv`` is the command that runs the suite against the file under test --
+    typically ``[sys.executable, RUNNER, module]`` for a runner script built on
+    :func:`kindkit.cli.main`. ``--report-json`` is appended, pointing at a path
+    in a directory created for this call alone, so no earlier run's report can
+    be read as this run's: the commonest way a file-based verdict goes stale.
+
+    A subprocess, because the probe must run against a file the gate has just
+    written; a module already imported cannot be reliably un-imported. And a
+    report file rather than the runner's printed summary, which is prose for
+    people (kindspec/kindkit#12).
+
+    No verdict -- :meth:`Verdict.none` -- when the run timed out, exited with
+    anything but 0 or 1, wrote no report, or wrote one its exit code disagrees
+    with. Each means the run measured something other than the suite, and none
+    of them is a kill.
+    """
+    from kindkit.cli import EXIT_FAILURES, EXIT_OK
+    from kindkit.runner import REPORT_FORMAT, REPORT_FORMAT_KEY
+
+    with tempfile.TemporaryDirectory(prefix="kindkit-probe-") as scratch:
+        path = os.path.join(scratch, "report.json")
+        try:
+            done = subprocess.run(
+                [*argv, "--report-json", path],
+                cwd=cwd,
+                env=None if env is None else dict(env),
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+            )
+        except subprocess.TimeoutExpired:
+            # "Nothing ran" is what BROKEN will say, which after a long stall is
+            # the opposite of what happened. Say what did.
+            print(f"  TIMEOUT  the suite did not finish within {timeout}s", file=sys.stderr)
+            return Verdict.none()
+        if done.returncode not in (EXIT_OK, EXIT_FAILURES) or not os.path.exists(path):
+            return Verdict.none()
+        with open(path, encoding="utf-8") as handle:
+            data = json.load(handle)
+    if data.get(REPORT_FORMAT_KEY) != REPORT_FORMAT:
+        raise GateError(
+            f"the runner wrote report format {data.get(REPORT_FORMAT_KEY)!r}; "
+            f"this kit reads format {REPORT_FORMAT}"
+        )
+    failures = frozenset(failure["id"] for failure in data["failures"])
+    if (done.returncode == EXIT_FAILURES) != bool(failures):
+        return Verdict.none()
+    return Verdict(ran=frozenset(data["cases"]), failures=failures)
 
 
 @dataclass(frozen=True)
@@ -510,6 +590,7 @@ def gate(
 
     try:
         baseline_verdict = _probe(probe, scratch_path, src)
+        _require_failures_that_ran(baseline_verdict, "the unmutated source")
         if not baseline_verdict.reached:
             raise GateError(
                 "the suite reached no verdict on the UNMUTATED source, so every "
@@ -538,6 +619,7 @@ def gate(
                 continue
 
             verdict = _probe(probe, scratch_path, mutated)
+            _require_failures_that_ran(verdict, f"mutant {mutant.name!r}")
             if not verdict.reached:
                 broken.append((mutant.name, "the suite reached no verdict; nothing ran"))
                 report(f"  BROKEN   {mutant.name:32} no verdict: nothing ran, so nothing caught it")
@@ -622,6 +704,21 @@ def _anchored(path: str | os.PathLike[str], what: str) -> str:
 def _sha(path: str) -> str:
     with open(path, "rb") as handle:
         return hashlib.sha256(handle.read()).hexdigest()
+
+
+def _require_failures_that_ran(verdict: Verdict, what: str) -> None:
+    """Refuse a failing case id the probe does not also report as run.
+
+    A failure is only a verdict about a case if that case ran. An id outside
+    the run -- a crash sentinel, an id from an earlier run, a typo -- would
+    otherwise score a kill that no case made.
+    """
+    stray = sorted(frozenset(verdict.failures) - frozenset(verdict.ran))
+    if stray:
+        raise GateError(
+            f"the probe reported failing case(s) it did not run, for {what}: "
+            f"{stray[:5]}{' ...' if len(stray) > 5 else ''}"
+        )
 
 
 def _purge_bytecode(path: str) -> None:
