@@ -544,7 +544,11 @@ MUTATIONS: tuple[Mutation, ...] = (
         # outright cannot match, because the token stream drops its magic comma.
         "os.path.dirname(importlib.util.cache_from_source(path))",
         'os.path.join(os.path.dirname(path), "__pycache__")',
-        (T_MUT + "test_a_mutant_is_never_served_the_previous_probes_bytecode[pycache-prefix]",),
+        (
+            T_MUT + "test_a_mutant_is_never_served_the_previous_probes_bytecode[pycache-prefix]",
+            T_MUT
+            + "test_a_mutant_is_never_served_the_previous_probes_bytecode[child-inherits-prefix]",
+        ),
     ),
     Mutation(
         "the scratch file may be the implementation, which the run then deletes",

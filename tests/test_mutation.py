@@ -341,6 +341,16 @@ def _in_process(path: str) -> str:
 
 def _in_a_child_without_a_prefix(path: str) -> str:
     env = {k: v for k, v in os.environ.items() if k != "PYTHONPYCACHEPREFIX"}
+    return _in_a_child(path, env)
+
+
+def _in_a_child_inheriting_the_prefix(path: str) -> str:
+    # What rowspec's probe does: a subprocess with the gate's environment.
+    env = dict(os.environ, PYTHONPYCACHEPREFIX=sys.pycache_prefix)
+    return _in_a_child(path, env)
+
+
+def _in_a_child(path: str, env: dict[str, str]) -> str:
     env.pop("PYTHONDONTWRITEBYTECODE", None)
     done = subprocess.run(
         [sys.executable, "-c", _CHILD_PROBE, path],
@@ -357,9 +367,10 @@ def _in_a_child_without_a_prefix(path: str) -> str:
     [
         (False, _in_process, True),
         (True, _in_process, False),
+        (True, _in_a_child_inheriting_the_prefix, False),
         (True, _in_a_child_without_a_prefix, True),
     ],
-    ids=["beside-source", "pycache-prefix", "gate-prefix-child-none"],
+    ids=["beside-source", "pycache-prefix", "child-inherits-prefix", "gate-prefix-child-none"],
 )
 def test_a_mutant_is_never_served_the_previous_probes_bytecode(
     tmp_path, monkeypatch, gate_prefix, load, cached_beside

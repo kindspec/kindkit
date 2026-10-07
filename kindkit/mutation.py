@@ -480,7 +480,8 @@ def gate(
     two mutants of the same size written in the same second can hand the
     interpreter the previous one. The kit purges the two places it can see
     (see `_purge_bytecode`); a probe whose interpreter caches anywhere else
-    must defeat caching itself (`PYTHONDONTWRITEBYTECODE=1`).
+    must defeat caching itself (`PYTHONDONTWRITEBYTECODE=1`), or use a prefix
+    that is fresh for every probe.
     """
     src_path = _anchored(source, "source")
     scratch_path = _anchored(scratch, "scratch")
