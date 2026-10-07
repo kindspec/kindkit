@@ -528,6 +528,29 @@ MUTATIONS: tuple[Mutation, ...] = (
         (T_MUT + "test_a_mutant_is_never_served_the_previous_probes_bytecode",),
     ),
     Mutation(
+        "bytecode cached beside the scratch file is no longer purged",
+        MUTATION,
+        '        os.path.join(os.path.dirname(path), "__pycache__"),\n',
+        "",
+        (
+            T_MUT
+            + "test_a_mutant_is_never_served_the_previous_probes_bytecode[gate-prefix-child-none]",
+        ),
+    ),
+    Mutation(
+        "bytecode cached under the interpreter's prefix is no longer purged",
+        MUTATION,
+        # The set dedupes a repeat, so this drops the entry; deleting the line
+        # outright cannot match, because the token stream drops its magic comma.
+        "os.path.dirname(importlib.util.cache_from_source(path))",
+        'os.path.join(os.path.dirname(path), "__pycache__")',
+        (
+            T_MUT + "test_a_mutant_is_never_served_the_previous_probes_bytecode[pycache-prefix]",
+            T_MUT
+            + "test_a_mutant_is_never_served_the_previous_probes_bytecode[child-inherits-prefix]",
+        ),
+    ),
+    Mutation(
         "the scratch file may be the implementation, which the run then deletes",
         MUTATION,
         "    if os.path.realpath(scratch_path) == os.path.realpath(src_path):",

@@ -46,6 +46,7 @@ from __future__ import annotations
 import ast
 import glob
 import hashlib
+import importlib.util
 import io
 import os
 import re
@@ -471,13 +472,16 @@ def gate(
     that matters untested -- a probe that reads something other than the file
     it is handed then agrees with itself, and every mutant survives.
 
-    Two things a probe that IMPORTS the scratch file has to get right, neither
-    of which the kit can check for it. Give the file a name nothing else on the
-    path claims, because the first matching directory wins and a leftover of
-    that name elsewhere shadows it in silence. And defeat bytecode caching
-    (`PYTHONDONTWRITEBYTECODE=1`): a `.pyc` is validated against the source
-    mtime in WHOLE SECONDS and its size, so two mutants of the same size
-    written in the same second can hand the interpreter the previous one.
+    Two things a probe that IMPORTS the scratch file has to get right. Give
+    the file a name nothing else on the path claims, because the first
+    matching directory wins and a leftover of that name elsewhere shadows it
+    in silence; the kit cannot check that. And mind bytecode caching: a `.pyc`
+    is validated against the source mtime in WHOLE SECONDS and its size, so
+    two mutants of the same size written in the same second can hand the
+    interpreter the previous one. The kit purges the two places it can see
+    (see `_purge_bytecode`); a probe whose interpreter caches anywhere else
+    must defeat caching itself (`PYTHONDONTWRITEBYTECODE=1`), or use a prefix
+    that is fresh for every probe.
     """
     src_path = _anchored(source, "source")
     scratch_path = _anchored(scratch, "scratch")
@@ -639,14 +643,26 @@ def _purge_bytecode(path: str) -> None:
     The name a probe imports is still the probe's own problem: `sys.path[0]`
     beats `PYTHONPATH`, so a file of the same name next to the runner shadows
     the scratch file, and no amount of care here can see that.
+
+    Beside the source is only the default. Under `PYTHONPYCACHEPREFIX` the
+    `.pyc` lives under the prefix instead, and a purge that looked only beside
+    the source found nothing there and said nothing (kindspec/kindkit#11). So
+    both places are cleared: the default, and wherever THIS interpreter caches
+    -- which is also where a probe's subprocess caches when it inherits the
+    gate's environment. A probe that gives its subprocess a different prefix
+    has to make that prefix fresh per probe; the kit cannot see it.
     """
     stem = os.path.splitext(os.path.basename(path))[0]
-    cache = os.path.join(os.path.dirname(path), "__pycache__")
-    for stale in glob.glob(os.path.join(glob.escape(cache), glob.escape(stem) + ".*.pyc")):
-        try:
-            os.remove(stale)
-        except OSError:  # pragma: no cover -- a cache we cannot clear is not ours
-            pass
+    caches = {
+        os.path.join(os.path.dirname(path), "__pycache__"),
+        os.path.dirname(importlib.util.cache_from_source(path)),
+    }
+    for cache in caches:
+        for stale in glob.glob(os.path.join(glob.escape(cache), glob.escape(stem) + ".*.pyc")):
+            try:
+                os.remove(stale)
+            except OSError:  # pragma: no cover -- a cache we cannot clear is not ours
+                pass
 
 
 def _probe(probe: Probe, path: str, text: str) -> Verdict:

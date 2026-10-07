@@ -178,12 +178,17 @@ the first one's code. Unlike shadowing, this is asymmetric — the baseline
 compiles a real `.pyc` and only colliding mutants read it back — so the run
 ends with a mixture of correct and silently wrong verdicts. Measured, on a
 probe doing nothing more exotic than `spec_from_file_location`: exit 0 over a
-mutant the suite provably detects. The kit purges
-`<scratch dir>/__pycache__/<stem>.*.pyc` on each write; anything a probe
-copies elsewhere is the probe's own to handle. A probe that runs its suite in
-a subprocess can remove the whole class rather than the instance by pointing
-`PYTHONPYCACHEPREFIX` at a fresh directory per run, which is what this
-repository's own gate does with `tools/mutation_gate.py`.
+mutant the suite provably detects. The kit purges `<stem>.*.pyc` on each
+write in two places: `<scratch dir>/__pycache__/`, and wherever the gate's
+own interpreter caches -- which differs under `PYTHONPYCACHEPREFIX`, and is
+also where a probe's subprocess caches when it inherits an **absolute**
+prefix from the gate's environment. What the probe still owns: a subprocess
+given a *different* prefix, a *relative* prefix resolved against a different
+working directory, or bytecode copied anywhere else, is invisible to the kit.
+Such a probe removes the whole class rather than the instance by running its
+subprocess with `-B` / `PYTHONDONTWRITEBYTECODE=1`, or with a prefix that is
+fresh for every probe. This repository's own gate, `tools/mutation_gate.py`,
+does the analogous thing for its pytest runs: a fresh prefix per mutation.
 
 ## The standard this has to meet
 
