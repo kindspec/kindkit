@@ -3,6 +3,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from kindkit import gitmerge
 
 BASE = "a=1\nb=2\nc=3\n"
@@ -52,3 +54,57 @@ def test_a_text_not_named_as_a_branch_is_not_merged():
     outcome, merged = gitmerge.merge(BASE, [MINE], "a.kv")
     assert outcome == gitmerge.CLEAN
     assert merged == MINE
+
+
+def _union_attributes(path):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("* merge=union\n")
+    return path
+
+
+def _home_gitconfig(tmp, env, text):
+    # Where a developer's settings actually live, not an env var naming them.
+    (tmp / ".gitconfig").write_text(text)
+    env.setenv("HOME", str(tmp))
+
+
+def _leak_conflict_style(tmp, env):
+    _home_gitconfig(tmp, env, "[merge]\n\tconflictStyle = diff3\n")
+
+
+def _leak_attributes_file(tmp, env):
+    attributes = _union_attributes(tmp / "attributes")
+    _home_gitconfig(tmp, env, f"[core]\n\tattributesFile = {attributes}\n")
+
+
+def _leak_xdg_attributes(tmp, env):
+    # Read with no config at all: the default core.attributesFile location.
+    _union_attributes(tmp / "xdg" / "git" / "attributes")
+    env.setenv("XDG_CONFIG_HOME", str(tmp / "xdg"))
+
+
+def _leak_git_dir(tmp, env):
+    # Inherited from a hook or an outer `git` process.
+    env.setenv("GIT_DIR", str(tmp / "elsewhere.git"))
+
+
+@pytest.mark.parametrize(
+    "leak",
+    [_leak_conflict_style, _leak_attributes_file, _leak_xdg_attributes, _leak_git_dir],
+    ids=["global-conflict-style", "global-attributes-file", "xdg-attributes", "git-dir"],
+)
+def test_the_callers_git_environment_does_not_reach_the_merge(leak, tmp_path, monkeypatch):
+    """Stock git means unconfigured git, not the git of whoever runs the suite.
+
+    Each leak changes what a plain `git merge` does on a developer machine: a
+    union attribute turns a conflict into a clean merge, diff3 adds a base
+    section whose header carries a commit hash. A case asserting either would
+    pass or fail by machine. CI runners are unconfigured, so only a local run
+    would be wrong -- and it would disagree with CI in silence.
+    """
+    competing = [MINE, "a=8\nb=2\nc=3\n"]
+    leak(tmp_path, monkeypatch)
+    outcome, merged = gitmerge.merge(BASE, competing, "a.kv")
+    assert outcome == gitmerge.CONFLICT
+    assert "|||||||" not in merged
+    assert merged.startswith("<<<<<<< HEAD\na=9\n=======\na=8\n>>>>>>> b1\n")

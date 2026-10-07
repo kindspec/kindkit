@@ -24,8 +24,27 @@ CLEAN = "clean"
 CONFLICT = "conflict"
 
 
+def _stock_env() -> dict[str, str]:
+    """The caller's environment with every way to configure git taken out.
+
+    Unconfigured means unconfigured on this machine too: a global
+    `merge.conflictStyle`, a `merge=union` attribute in the global or XDG
+    attributes file, or a `GIT_DIR` inherited from a hook all change what the
+    merge does, and CI -- whose runners carry none of them -- would disagree
+    with a developer's run in silence.
+    """
+    env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+    env["GIT_CONFIG_GLOBAL"] = os.devnull
+    env["GIT_CONFIG_NOSYSTEM"] = "1"
+    env["GIT_ATTR_NOSYSTEM"] = "1"
+    # The default core.attributesFile is $XDG_CONFIG_HOME/git/attributes, read
+    # even when no config names it. Point it at a directory that cannot exist.
+    env["XDG_CONFIG_HOME"] = os.path.join(os.devnull, "kindkit")
+    return env
+
+
 def _git(*args: str, cwd: str | None = None) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(("git", *args), cwd=cwd, capture_output=True, text=True)
+    return subprocess.run(("git", *args), cwd=cwd, capture_output=True, text=True, env=_stock_env())
 
 
 def merge(base: str, branches: Sequence[str], filename: str) -> tuple[str, str]:
