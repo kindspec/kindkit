@@ -19,6 +19,7 @@ import os
 import shutil
 import subprocess
 import sys
+import time
 
 import pytest
 
@@ -418,6 +419,56 @@ def test_a_mutant_is_never_served_the_previous_probes_bytecode(
         "no bytecode was cached where this case expects it, so this test could "
         "not have caught the defect it names"
     )
+
+
+#: Same-size mutants of CACHED. The suite detects a `b...` mark and allows an
+#: `a...` one, and the gate writes them alternately, so a mutant served the
+#: previous write's bytecode always gets the verdict of the other class.
+_PAIRS = 10
+
+
+def test_a_mutant_is_never_served_bytecode_the_purge_cannot_see(tmp_path):
+    """The collision with nothing pinned: no `os.utime` anywhere in the probe.
+
+    The probe's interpreter caches under a prefix of its own, which the gate
+    cannot see or purge (kindspec/kindkit#11). Fast probes then land several
+    writes in one mtime second, and the loader validates the previous write's
+    `.pyc` against the next one's (second, size).
+    """
+    source = tmp_path / "impl.py"
+    source.write_text(CACHED)
+    prefix = tmp_path / "probe-prefix"
+    env = dict(os.environ, PYTHONPYCACHEPREFIX=str(prefix))
+
+    def probe(path: str) -> Verdict:
+        mark = _in_a_child(path, dict(env))
+        return Verdict(ran={"mark"}, failures={"mark"} if mark.startswith("b") else ())
+
+    mutants = []
+    for i in range(_PAIRS):
+        mutants.append(Mutant(f"b{i:02d}", 'MARK = "aaa"', f'MARK = "b{i:02d}"'))
+        mutants.append(
+            Mutant(f"a{i:02d}", 'MARK = "aaa"', f'MARK = "a{i:02d}"', equivalent="the suite allows")
+        )
+    started = time.monotonic()
+    report = gate(
+        source=str(source),
+        mutants=mutants,
+        probe=probe,
+        scratch=str(tmp_path / "under_test.py"),
+        report=quiet,
+    )
+    elapsed = time.monotonic() - started
+
+    # Without both of these the collision was never possible, and a pass here
+    # would say nothing: no bytecode in the probe's prefix, or writes so slow
+    # that no two of them shared a second.
+    assert glob.glob(str(prefix / "**" / "under_test.*.pyc"), recursive=True)
+    assert elapsed < 2 * _PAIRS - 1, f"{elapsed:.1f}s: too slow to share an mtime second"
+
+    assert report.killed == tuple(f"b{i:02d}" for i in range(_PAIRS))
+    assert report.equivalent == tuple(f"a{i:02d}" for i in range(_PAIRS))
+    assert report.ok
 
 
 def test_a_scratch_path_that_is_the_source_is_refused(tmp_path):

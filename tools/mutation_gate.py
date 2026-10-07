@@ -489,8 +489,8 @@ MUTATIONS: tuple[Mutation, ...] = (
     Mutation(
         "the gate mutates the implementation in place",
         MUTATION,
-        "            verdict = _probe(probe, scratch_path, mutated)",
-        "            verdict = _probe(probe, src_path, mutated)",
+        "            verdict = _probe(probe, scratch_path, mutated, next(stamps))",
+        "            verdict = _probe(probe, src_path, mutated, next(stamps))",
         (T_MUT + "test_the_gate_never_writes_to_the_implementation",),
     ),
     Mutation(
@@ -714,6 +714,20 @@ MUTATIONS: tuple[Mutation, ...] = (
         "    if os.path.realpath(scratch_path) == os.path.realpath(src_path):",
         "    if False:",
         (T_MUT + "test_a_scratch_path_that_is_the_source_is_refused",),
+    ),
+    Mutation(
+        "a scratch write keeps the wall-clock mtime, so writes share a second",
+        MUTATION,
+        "    os.utime(path, (stamp, stamp))",
+        "    pass",
+        (T_MUT + "test_a_mutant_is_never_served_bytecode_the_purge_cannot_see",),
+    ),
+    Mutation(
+        "every scratch write in a run gets the same mtime",
+        MUTATION,
+        "    stamps = itertools.count(random.randrange(*_STAMP_RANGE))",
+        "    stamps = itertools.repeat(random.randrange(*_STAMP_RANGE))",
+        (T_MUT + "test_a_mutant_is_never_served_bytecode_the_purge_cannot_see",),
     ),
     Mutation(
         "a run that killed nothing reports a pass",
