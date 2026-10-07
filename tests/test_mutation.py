@@ -16,6 +16,7 @@ from __future__ import annotations
 import glob
 import importlib.util
 import os
+import random
 import shutil
 import subprocess
 import sys
@@ -469,6 +470,53 @@ def test_a_mutant_is_never_served_bytecode_the_purge_cannot_see(tmp_path):
     assert report.killed == tuple(f"b{i:02d}" for i in range(_PAIRS))
     assert report.equivalent == tuple(f"a{i:02d}" for i in range(_PAIRS))
     assert report.ok
+
+
+def _stamps_of_a_run(tmp_path, name: str) -> list[float]:
+    """The scratch file's mtime at each probe of one gate run."""
+    source = tmp_path / f"{name}.py"
+    source.write_text(CACHED)
+    seen: list[float] = []
+
+    def probe(path: str) -> Verdict:
+        seen.append(os.stat(path).st_mtime)
+        with open(path, encoding="utf-8") as handle:
+            caught = "aaa" not in handle.read()
+        return Verdict(ran={"mark"}, failures={"mark"} if caught else ())
+
+    gate(
+        source=str(source),
+        mutants=[Mutant(f"m{i}", 'MARK = "aaa"', f'MARK = "b{i}{i}"') for i in range(3)],
+        probe=probe,
+        scratch=str(tmp_path / f"{name}_under_test.py"),
+        report=quiet,
+    )
+    return seen
+
+
+def test_consecutive_scratch_writes_are_two_seconds_apart(tmp_path):
+    # FAT and exFAT store mtimes in 2-second steps, so stamps one second apart
+    # can land on the same stored value and collide again.
+    stamps = _stamps_of_a_run(tmp_path, "steps")
+    assert len(stamps) == 4
+    assert [b - a for a, b in zip(stamps, stamps[1:], strict=False)] == [2, 2, 2]
+
+
+def test_a_callers_random_generator_is_not_drawn_from(tmp_path):
+    random.seed(1234)
+    state = random.getstate()
+    _stamps_of_a_run(tmp_path, "one")
+    assert random.getstate() == state, "the gate drew from the caller's random generator"
+
+
+def test_a_callers_random_seed_does_not_fix_the_stamps(tmp_path):
+    # Seeded the same way twice, two runs must still start on different
+    # stamps; otherwise the second can inherit the first one's `.pyc`.
+    random.seed(1234)
+    first = _stamps_of_a_run(tmp_path, "one")[0]
+    random.seed(1234)
+    second = _stamps_of_a_run(tmp_path, "two")[0]
+    assert first != second, "a seeded caller made two runs start on the same stamp"
 
 
 def test_a_scratch_path_that_is_the_source_is_refused(tmp_path):

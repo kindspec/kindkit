@@ -588,8 +588,13 @@ class GateReport:
 
 #: Where a run's scratch-file mtimes start: a random whole second between
 #: 2000-01-01 and 2020-01-01 UTC. In the past, so no write is dated in the
-#: future; random, so a run is unlikely to reuse a previous run's seconds.
+#: future; random, so a run is unlikely to start on the stamp a previous run
+#: left its `.pyc` at. Drawn from the OS, not the `random` module, so a
+#: caller's `random.seed()` neither fixes it nor has its own sequence consumed.
 _STAMP_RANGE = (946_684_800, 1_577_836_800)
+#: Seconds between consecutive stamps. Two, not one: FAT and exFAT store
+#: mtimes in 2-second steps, where stamps a second apart can be stored equal.
+_STAMP_STEP = 2
 
 
 def gate(
@@ -621,10 +626,11 @@ def gate(
     is validated against the source mtime in WHOLE SECONDS and its size, so
     two mutants of the same size written in the same second can hand the
     interpreter the previous one. The kit stamps every write with its own
-    mtime second, so a `.pyc` left by an earlier write fails validation
-    wherever it was cached, and also purges the two places it can see (see
-    `_probe`). A probe that resets the file's mtime undoes the stamp, and
-    then only the purge stands between it and stale bytecode.
+    mtime, two seconds after the last, so a `.pyc` compiled from an earlier
+    write OF THE SCRATCH FILE fails validation wherever it was cached, and
+    it also purges the two places it can see (see `_probe`). A probe that
+    resets the file's mtime, or that copies or rewrites the source before
+    importing it -- the copy gets a wall-clock mtime -- is outside both.
     """
     src_path = _anchored(source, "source")
     scratch_path = _anchored(scratch, "scratch")
@@ -650,7 +656,7 @@ def gate(
     with open(src_path, encoding="utf-8", newline="") as handle:
         src = handle.read()
     origin = _sha(src_path)
-    stamps = itertools.count(random.randrange(*_STAMP_RANGE))
+    stamps = itertools.count(random.SystemRandom().randrange(*_STAMP_RANGE), _STAMP_STEP)
 
     try:
         baseline_verdict = _probe(probe, scratch_path, src, next(stamps))
@@ -839,11 +845,12 @@ def _probe(probe: Probe, path: str, text: str, stamp: int) -> Verdict:
 
     The write is dated ``stamp``, which no other write in the run shares. A
     `.pyc` records the (mtime second, size) of the source it was compiled
-    from, so one left by any earlier write no longer validates -- including
-    under a `PYTHONPYCACHEPREFIX` the probe chose and `_purge_bytecode`
-    cannot see (kindspec/kindkit#11). Fast probes land several writes in one
-    wall-clock second, which is exactly when the real mtime cannot tell them
-    apart.
+    from, so one compiled from an earlier write of this file no longer
+    validates -- including under a `PYTHONPYCACHEPREFIX` the probe chose and
+    `_purge_bytecode` cannot see (kindspec/kindkit#11). A copy of the file
+    is another source with its own mtime, and the stamp says nothing about
+    it. Fast probes land several writes in one wall-clock second, which is
+    exactly when the real mtime cannot tell them apart.
 
     The hash is taken after the write and again after the probe returns. A
     probe that rewrites, deletes or reformats the file it was handed is

@@ -225,21 +225,34 @@ ends with a mixture of correct and silently wrong verdicts. Measured, on a
 probe doing nothing more exotic than `spec_from_file_location`: exit 0 over a
 mutant the suite provably detects.
 
-So the kit dates every write of the scratch file with **its own mtime
-second**: a run starts at a random second between 2000 and 2020 and adds one
-per write. A `.pyc` left by any earlier write then fails validation wherever
-it was cached -- beside the source, under the gate's `PYTHONPYCACHEPREFIX`,
-under a prefix the probe chose for itself, or copied elsewhere. It also still
-purges `<stem>.*.pyc` from the two places it can see: `<scratch
-dir>/__pycache__/`, and wherever the gate's own interpreter caches.
+So the kit dates every write of the scratch file with **its own mtime**: a
+run starts at a random second between 2000 and 2020, drawn from the OS rather
+than the `random` module, and adds two seconds per write -- two, because FAT
+and exFAT store mtimes in 2-second steps. A `.pyc` compiled from an earlier
+write *of the scratch file* then fails validation wherever it was cached:
+beside it, under the gate's `PYTHONPYCACHEPREFIX`, or under a prefix the
+probe chose for itself. The kit also still purges `<stem>.*.pyc` from the two
+places it can see: `<scratch dir>/__pycache__/`, and wherever the gate's own
+interpreter caches.
 
-What the probe still owns: **a probe that sets the scratch file's mtime
-undoes the stamp**, and then only the purge stands between it and stale
-bytecode; so does an interpreter told to trust unchecked hash-based `.pyc`
-files. Across runs the stamp is a random draw, not a guarantee: a second run
-collides only by landing a write on the exact second, at the exact size, of
-the `.pyc` an earlier run left behind. A probe that wants none of this to
-matter runs its subprocess with `-B` / `PYTHONDONTWRITEBYTECODE=1`. This
+What the probe still owns, because neither the stamp nor the purge reaches it:
+
+- **a probe that sets the scratch file's mtime** undoes the stamp;
+- **a probe that copies or rewrites the source before importing it**: the
+  copy is a different source with a wall-clock mtime, and same-size copies
+  written within one second collide exactly as before -- and so does
+  bytecode copied anywhere else;
+- **a filesystem whose mtimes are coarser than 2 seconds**;
+- **an interpreter told to trust unchecked hash-based `.pyc` files**, which
+  ignores mtimes entirely;
+- **across runs, the stamp is a random draw, not a guarantee.** Within a run
+  each import recompiles over the previous `.pyc`, so what a later run can
+  inherit is the one `.pyc` an earlier run left for the same path. It
+  collides only if the later run's *first* write lands on that `.pyc`'s
+  exact stamp, at the exact size.
+
+A probe that wants none of this to matter runs its subprocess with `-B` /
+`PYTHONDONTWRITEBYTECODE=1`. This
 repository's own gate, `tools/mutation_gate.py`, does the analogous thing
 for its pytest runs: a fresh prefix per mutation.
 
