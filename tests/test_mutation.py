@@ -256,9 +256,8 @@ def test_a_mutant_that_leaves_the_suite_with_no_verdict_is_broken_not_killed(tmp
     An implementation that will not import takes the whole run down with it.
     Every case goes unopened, so no case detected anything -- and a gate that
     counts that as a kill is reporting on a suite it never ran. rowspec's gate
-    scores this as a kill today (its `<runner crashed>` sentinel is a member of
-    the failing set); no mutant currently triggers it, which is the only reason
-    the number is right.
+    once did (kindspec/rowspec#45: its `<runner crashed>` sentinel was a member
+    of the failing set), until it moved onto this kit and `probe_command`.
     """
     report = run_gate([Mutant("unimportable", *UNIMPORTABLE), killer()], tmp_path=tmp_path)
     # The reason, not just the bucket: "nothing ran" is a crash to go and find,
@@ -506,7 +505,7 @@ def test_an_equivalence_claim_the_suite_refutes_is_a_false_claim(tmp_path):
 
 
 def test_an_equivalence_claim_naming_no_mutant_is_refused(tmp_path):
-    """The orphan rowspec has carried for months, made impossible by the data model.
+    """The orphan rowspec carried for months, made impossible by the data model.
 
     kindspec/rowspec#37: an EQUIVALENT entry outlived the mutant it excused and
     was skipped in silence, because nothing joins a side table to a key that is
