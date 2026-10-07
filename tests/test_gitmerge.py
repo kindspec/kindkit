@@ -3,6 +3,10 @@
 
 from __future__ import annotations
 
+import os
+import re
+import shutil
+
 import pytest
 
 from kindkit import gitmerge
@@ -136,3 +140,54 @@ def test_the_callers_git_environment_does_not_reach_the_merge(leak, tmp_path, mo
     assert outcome == gitmerge.CONFLICT
     assert "|||||||" not in merged
     assert merged.startswith("<<<<<<< HEAD\na=9\n=======\na=8\n>>>>>>> b1\n")
+
+
+def _fail_one_git_call(tmp, env, args: str, nth: int) -> None:
+    """Put a `git` on PATH that fails the ``nth`` call whose argv is ``args``.
+
+    A real process failing a real call, not a patched `_git`: what is under
+    test is what `merge` does with git's exit status.
+    """
+    real = shutil.which("git")
+    shim = tmp / "shim"
+    shim.mkdir()
+    (shim / "git").write_text(
+        "#!/bin/sh\n"
+        f'if [ "$*" = "{args}" ]; then\n'
+        f'  n=$(cat "{tmp}/count" 2>/dev/null || echo 0); n=$((n + 1)); echo $n > "{tmp}/count"\n'
+        f'  if [ "$n" = "{nth}" ]; then echo "fatal: injected" >&2; exit 128; fi\n'
+        "fi\n"
+        f'exec "{real}" "$@"\n'
+    )
+    (shim / "git").chmod(0o755)
+    env.setenv("PATH", f"{shim}{os.pathsep}{os.environ['PATH']}")
+
+
+@pytest.mark.parametrize(
+    ("args", "nth"),
+    [
+        ("config gc.auto 0", 1),
+        ("add -A", 1),
+        ("branch -M main", 1),
+        ("checkout -q main", 1),
+        ("checkout -qb b0", 1),
+        # Two branches, so the third `checkout -q main` is the one before merging.
+        ("checkout -q main", 3),
+    ],
+    ids=["config", "add", "branch", "checkout-main", "checkout-branch", "checkout-before-merge"],
+)
+def test_a_git_call_that_fails_raises_rather_than_being_ignored(args, nth, tmp_path, monkeypatch):
+    # Ignored, a failed checkout leaves every branch's commit on `main` and
+    # the merge of a branch that does not exist comes back as CONFLICT -- a
+    # verdict about a merge git never performed.
+    _fail_one_git_call(tmp_path, monkeypatch, args, nth)
+    with pytest.raises(RuntimeError, match=rf"^git {re.escape(args)} failed: fatal: injected"):
+        gitmerge.merge(BASE, [MINE, YOURS], "a.kv")
+
+
+def test_a_merge_that_fails_without_a_conflict_raises_rather_than_reporting_one(
+    tmp_path, monkeypatch
+):
+    _fail_one_git_call(tmp_path, monkeypatch, "merge b0 -m m", 1)
+    with pytest.raises(RuntimeError, match=r"^git merge b0 failed without a conflict"):
+        gitmerge.merge(BASE, [MINE, YOURS], "a.kv")
