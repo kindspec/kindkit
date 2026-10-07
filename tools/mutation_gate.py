@@ -241,6 +241,44 @@ MUTATIONS: tuple[Mutation, ...] = (
         ),
     ),
     Mutation(
+        "the developer's HOME reaches the merge",
+        GITMERGE,
+        '    env["HOME"] = nowhere',
+        "    pass",
+        (
+            "tests/test_gitmerge.py::test_the_callers_git_environment_does_not_reach_the_merge[global-conflict-style]",
+            "tests/test_gitmerge.py::test_the_callers_git_environment_does_not_reach_the_merge[global-attributes-file]",
+        ),
+    ),
+    Mutation(
+        "the developer's XDG_CONFIG_HOME reaches the merge",
+        GITMERGE,
+        '    env["XDG_CONFIG_HOME"] = nowhere',
+        "    pass",
+        (
+            "tests/test_gitmerge.py::test_the_callers_git_environment_does_not_reach_the_merge[xdg-attributes]",
+        ),
+    ),
+    Mutation(
+        "GIT_* variables from an outer git process reach the merge",
+        GITMERGE,
+        'if not k.startswith("GIT_")',
+        "if True",
+        (
+            "tests/test_gitmerge.py::test_the_callers_git_environment_does_not_reach_the_merge[config-count]",
+            "tests/test_gitmerge.py::test_the_callers_git_environment_does_not_reach_the_merge[git-dir]",
+        ),
+    ),
+    Mutation(
+        "git runs in the caller's environment",
+        GITMERGE,
+        "text=True, env=env)",
+        "text=True)",
+        (
+            "tests/test_gitmerge.py::test_the_callers_git_environment_does_not_reach_the_merge[git-dir]",
+        ),
+    ),
+    Mutation(
         "the order of the branches is collapsed",
         GITMERGE,
         "        for index, text in enumerate(branches):",
