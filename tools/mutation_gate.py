@@ -967,6 +967,15 @@ MUTATIONS: tuple[Mutation, ...] = (
         'JSON_MUTATIONS = [m for m in mutation_gate.MUTATIONS if m.path.endswith(".nothing")]',
         ("tests/test_mutation_gate.py::test_there_are_json_mutations_to_check",),
     ),
+    Mutation(
+        # Version-free on purpose: prefixing the pin moves it off the locked
+        # ruff whatever that is, so a deliberate bump does not stale this entry.
+        "the ruff hook drifts from the ruff the project locks",
+        ".pre-commit-config.yaml",
+        "ruff-pre-commit\n    rev: v",
+        "ruff-pre-commit\n    rev: v0.0.0-",
+        ("tests/test_tooling.py::test_the_ruff_hook_runs_the_ruff_the_project_locks",),
+    ),
 )
 
 
