@@ -52,6 +52,21 @@ def _git(
     return subprocess.run(("git", *args), cwd=cwd, capture_output=True, text=True, env=env)
 
 
+def _must(
+    env: dict[str, str], *args: str, cwd: str | None = None
+) -> subprocess.CompletedProcess[str]:
+    """Run a git call the merge depends on, and raise if it failed.
+
+    Ignored, a failed setup call does not stop the run: a checkout that did
+    not happen leaves the next commit on the wrong branch, and the merge that
+    follows reports on a history nobody asked for.
+    """
+    done = _git(env, *args, cwd=cwd)
+    if done.returncode:
+        raise RuntimeError(f"git {' '.join(args)} failed: {done.stderr.strip()}")
+    return done
+
+
 def merge(base: str, branches: Sequence[str], filename: str) -> tuple[str, str]:
     """Merge each of ``branches``, in order, into a repository seeded with ``base``.
 
@@ -83,26 +98,36 @@ def merge(base: str, branches: Sequence[str], filename: str) -> tuple[str, str]:
             ("gc.auto", "0"),
             ("maintenance.auto", "false"),
         ):
-            _git(env, "config", key, value, cwd=workdir)
+            _must(env, "config", key, value, cwd=workdir)
 
         path = os.path.join(workdir, filename)
         _write(path, base)
-        _git(env, "add", "-A", cwd=workdir)
+        _must(env, "add", "-A", cwd=workdir)
         if _git(env, "commit", "-qm", "b", cwd=workdir).returncode:
             raise RuntimeError("git commit failed: merge cases cannot be run")
-        _git(env, "branch", "-M", "main", cwd=workdir)
+        _must(env, "branch", "-M", "main", cwd=workdir)
 
         for index, text in enumerate(branches):
-            _git(env, "checkout", "-q", "main", cwd=workdir)
-            _git(env, "checkout", "-qb", f"b{index}", cwd=workdir)
+            _must(env, "checkout", "-q", "main", cwd=workdir)
+            _must(env, "checkout", "-qb", f"b{index}", cwd=workdir)
             _write(path, text)
             if _git(env, "commit", "-qam", f"b{index}", cwd=workdir).returncode:
                 raise RuntimeError(f"git commit failed on branch b{index}")
 
-        _git(env, "checkout", "-q", "main", cwd=workdir)
+        _must(env, "checkout", "-q", "main", cwd=workdir)
         for index in range(len(branches)):
-            if _git(env, "merge", f"b{index}", "-m", "m", cwd=workdir).returncode:
+            merged = _git(env, "merge", f"b{index}", "-m", "m", cwd=workdir)
+            if not merged.returncode:
+                continue
+            # A non-zero merge is a CONFLICT only if git stopped on one, which
+            # leaves unmerged entries in the index. Any other failure is git
+            # not merging at all, and reporting it as an outcome would let a
+            # case expecting a conflict pass over a merge that never ran.
+            if _must(env, "ls-files", "-u", cwd=workdir).stdout:
                 return CONFLICT, _read(path)
+            raise RuntimeError(
+                f"git merge b{index} failed without a conflict: {merged.stderr.strip()}"
+            )
         return CLEAN, _read(path)
     finally:
         # Failing to delete a temp directory must never fail a case: the merge
