@@ -616,7 +616,7 @@ MUTATIONS: tuple[Mutation, ...] = (
     Mutation(
         "a report in an unknown format is read as this one",
         MUTATION,
-        "    if data.get(REPORT_FORMAT_KEY) != REPORT_FORMAT:",
+        "    if type(version) is not int or version != REPORT_FORMAT:",
         "    if False:",
         (T_REP + "test_a_report_in_an_unknown_format_is_refused",),
     ),
@@ -664,6 +664,49 @@ MUTATIONS: tuple[Mutation, ...] = (
         '        print(f"    | {line}", file=sys.stderr)',
         "        pass",
         (T_REP + "test_no_verdict_says_what_the_runner_said",),
+    ),
+    Mutation(
+        "a mutant that ran extra cases is measured as if it were the same suite",
+        MUTATION,
+        "            if frozenset(verdict.ran) != baseline_ran:",
+        "            if frozenset(verdict.ran) < baseline_ran:",
+        (T_REP + "test_a_mutant_that_ran_different_cases_is_broken_not_equivalent[more-cases]",),
+    ),
+    Mutation(
+        "a report version of True or 1.0 is read as format 1",
+        MUTATION,
+        "    if type(version) is not int or version != REPORT_FORMAT:",
+        "    if version != REPORT_FORMAT:",
+        (
+            T_REP + "test_a_report_in_an_unknown_format_is_refused[bool]",
+            T_REP + "test_a_report_in_an_unknown_format_is_refused[float]",
+        ),
+    ),
+    Mutation(
+        "a failure message that is not text is accepted",
+        MUTATION,
+        'isinstance(f.get("id"), str) and isinstance(f.get("message"), str)',
+        'isinstance(f.get("id"), str)',
+        (T_REP + "test_a_malformed_report_is_refused_by_name[message-not-text]",),
+    ),
+    Mutation(
+        "a report failing a case it does not list is accepted",
+        MUTATION,
+        "    if not failing <= set(cases):",
+        "    if False:",
+        (T_REP + "test_a_malformed_report_is_refused_by_name[failure-not-in-cases]",),
+    ),
+    Mutation(
+        "a report its exit code contradicts is discarded without saying why",
+        MUTATION,
+        '        _say_why(done, f"exited {done.returncode} with '
+        '{len(failures)} failure(s) in its report")',
+        "        pass",
+        (
+            T_REP + "test_a_report_its_exit_code_disagrees_with_is_no_verdict[exit-1-no-failures]",
+            T_REP
+            + "test_a_report_its_exit_code_disagrees_with_is_no_verdict[exit-0-with-failures]",
+        ),
     ),
     Mutation(
         "the scratch file may be the implementation, which the run then deletes",

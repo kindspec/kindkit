@@ -134,7 +134,7 @@ def test_an_implementation_that_will_not_import_is_no_verdict(tmp_path, capsys):
     [(1, []), (0, [{"id": "a", "message": "m"}])],
     ids=["exit-1-no-failures", "exit-0-with-failures"],
 )
-def test_a_report_its_exit_code_disagrees_with_is_no_verdict(tmp_path, code, failures):
+def test_a_report_its_exit_code_disagrees_with_is_no_verdict(tmp_path, capsys, code, failures):
     liar = tmp_path / "liar.py"
     liar.write_text(
         "import json, sys\n"
@@ -146,14 +146,19 @@ def test_a_report_its_exit_code_disagrees_with_is_no_verdict(tmp_path, code, fai
         encoding="utf-8",
     )
     assert probe_command([sys.executable, str(liar)]) == Verdict.none()
+    assert "NO VERDICT" in capsys.readouterr().err
 
 
-def test_a_report_in_an_unknown_format_is_refused(tmp_path):
+@pytest.mark.parametrize(
+    "version", [repr(REPORT_FORMAT + 1), "True", "1.0"], ids=["next", "bool", "float"]
+)
+def test_a_report_in_an_unknown_format_is_refused(tmp_path, version):
+    """`True == 1` and `1.0 == 1`, so equality alone would read both as format 1."""
     future = tmp_path / "future.py"
     future.write_text(
         "import json, sys\n"
         "path = sys.argv[sys.argv.index('--report-json') + 1]\n"
-        f"json.dump({{{REPORT_FORMAT_KEY!r}: {REPORT_FORMAT + 1}, 'cases': [], 'failures': []}},"
+        f"json.dump({{{REPORT_FORMAT_KEY!r}: {version}, 'cases': ['a'], 'failures': []}},"
         " open(path, 'w'))\n",
         encoding="utf-8",
     )
@@ -201,14 +206,18 @@ def test_a_failing_id_the_probe_did_not_run_is_a_hard_failure(tmp_path, when):
         )
 
 
-def test_a_mutant_that_ran_different_cases_is_broken_not_equivalent(tmp_path):
-    """Cases that did not run cannot vouch for an equivalence claim."""
+@pytest.mark.parametrize(
+    "mutant_ran", [{"c"}, {"a", "b", "c", "d"}], ids=["fewer-cases", "more-cases"]
+)
+def test_a_mutant_that_ran_different_cases_is_broken_not_equivalent(tmp_path, mutant_ran):
+    """Cases that did not run cannot vouch for an equivalence claim; extra
+    cases are a different suite from the one the baseline measured."""
     source = _kv_copy(tmp_path)
     calls = []
 
     def probe(path: str) -> Verdict:
         calls.append(path)
-        return Verdict(ran={"a", "b", "c"} if len(calls) == 1 else {"c"})
+        return Verdict(ran={"a", "b", "c"} if len(calls) == 1 else mutant_ran)
 
     report = gate(
         source=source,
@@ -245,6 +254,10 @@ def test_a_report_path_that_cannot_be_written_is_no_verdict_not_a_failure(tmp_pa
         f'{{"{REPORT_FORMAT_KEY}": {REPORT_FORMAT}, "cases": ["x", "x"], "failures": []}}',
         f'{{"{REPORT_FORMAT_KEY}": {REPORT_FORMAT}, "cases": ["a"]}}',
         f'{{"{REPORT_FORMAT_KEY}": {REPORT_FORMAT}, "cases": ["a"], "failures": ["a"]}}',
+        f'{{"{REPORT_FORMAT_KEY}": {REPORT_FORMAT}, "cases": ["a"],'
+        ' "failures": [{"id": "a", "message": 5}]}',
+        f'{{"{REPORT_FORMAT_KEY}": {REPORT_FORMAT}, "cases": ["a"],'
+        ' "failures": [{"id": "zzz", "message": "m"}]}',
     ],
     ids=[
         "not-json",
@@ -254,6 +267,8 @@ def test_a_report_path_that_cannot_be_written_is_no_verdict_not_a_failure(tmp_pa
         "cases-dup",
         "no-failures",
         "bare-ids",
+        "message-not-text",
+        "failure-not-in-cases",
     ],
 )
 def test_a_malformed_report_is_refused_by_name(tmp_path, body):

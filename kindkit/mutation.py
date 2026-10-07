@@ -21,7 +21,8 @@ So this module refuses to skip anything, in four distinct ways:
 * a pattern that matches nothing, matches ambiguously, or produces source that
   will not parse is STALE, which fails the run;
 * a suite that reached NO VERDICT -- it crashed, it found no cases, the mutated
-  module would not import -- is BROKEN, never "caught". Nothing ran, so nothing
+  module would not import -- or that ran a different set of cases than it did
+  on the unmutated source, is BROKEN, never "caught". Nothing ran, so nothing
   caught it. Scoring absence of success as success is the same bug in the same
   family, and the kit's own gate found it in itself once;
 * an equivalence claim lives ON the mutant it excuses, so a claim cannot
@@ -414,6 +415,14 @@ class Verdict:
     well be why it crashed, but no case caught it, and a gate that scores it as
     caught is reporting on a suite it never ran. ``Verdict.none()`` says so.
 
+    And ``ran`` must be the WHOLE suite on every run, not the cases reached
+    before something stopped it. The gate refuses a mutant run whose ``ran``
+    differs from the baseline's as BROKEN: a case that did not run cannot have
+    caught the mutant, or vouched for an equivalence claim. So a probe must not
+    stop at the first failure (the ``pytest -x`` shape); every kill would then
+    be BROKEN. ``probe_command`` over a ``kindkit.cli`` runner always reports
+    the whole tree, because discovery does not depend on the implementation.
+
     ``failures`` is the SET OF CASE IDS that failed, not a count. A count
     proves nothing: a suite that runs ahead of its implementation fails some
     cases already, so "the mutant made 7 cases fail" is only a kill once you
@@ -523,7 +532,9 @@ def _parse_report(text: str) -> tuple[frozenset[str], frozenset[str]]:
         raise bad(f"not JSON ({exc})") from exc
     if not isinstance(data, dict):
         raise bad("not a JSON object")
-    if data.get(REPORT_FORMAT_KEY) != REPORT_FORMAT:
+    version = data.get(REPORT_FORMAT_KEY)
+    # `True == 1` and `1.0 == 1`: an equality test alone accepts both.
+    if type(version) is not int or version != REPORT_FORMAT:
         raise GateError(
             f"the runner wrote report format {data.get(REPORT_FORMAT_KEY)!r}; "
             f"this kit reads format {REPORT_FORMAT}"
@@ -538,7 +549,10 @@ def _parse_report(text: str) -> tuple[frozenset[str], frozenset[str]]:
         for f in failures
     ):
         raise bad("'failures' is not a list of {id, message} objects")
-    return frozenset(cases), frozenset(f["id"] for f in failures)
+    failing = frozenset(f["id"] for f in failures)
+    if not failing <= set(cases):
+        raise bad(f"'failures' names case(s) not in 'cases': {sorted(failing - set(cases))[:5]}")
+    return frozenset(cases), failing
 
 
 @dataclass(frozen=True)

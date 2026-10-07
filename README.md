@@ -163,7 +163,8 @@ Six verdicts, of which four fail the run:
     STALE       the pattern matches nothing, matches ambiguously, or does not
                 parse -- so nothing was measured
     BOGUS       a mutant claimed inert that the suite detects: a false claim
-    BROKEN      the suite reached no verdict, so nothing caught anything
+    BROKEN      the suite reached no verdict, or ran a different set of
+                cases than on the unmutated source -- so nothing caught it
 
 **A mutant whose pattern no longer matches is a failure, never a skip.** So is
 an equivalence claim naming a mutant that no longer exists, which is why a
@@ -178,7 +179,9 @@ interpreter and reads back its `--report-json`, from a path created for that
 call alone so no earlier report can be read as this one. A timeout, an exit
 code other than 0 or 1, a missing report, or a report its exit code
 contradicts all come back as `Verdict.none()`. A probe that cannot use it builds
-`Verdict(ran=..., failures=...)` itself; both are keyword-only.
+`Verdict(ran=..., failures=...)` itself; both are keyword-only, and `ran` must
+be the **whole** suite on every run -- a probe that stops at the first failure
+turns every kill into BROKEN, because cases that did not run vouch for nothing.
 
 **`Verdict.none()` is not a kill.** The mutation may well be what crashed the
 suite -- but no case caught it, because no case ran. That distinction is the
