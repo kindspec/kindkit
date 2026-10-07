@@ -1022,9 +1022,16 @@ MUTATIONS: tuple[Mutation, ...] = (
         "    if unrun or foreign:",
         "    if False:",
         (
-            T_CONF + "test_a_suite_that_ran_only_a_subtree_is_no_verdict",
+            T_CONF + "test_a_report_from_the_right_root_that_ran_only_some_cases_is_no_verdict",
             T_CONF + "test_a_suite_that_ran_a_case_outside_the_tree_is_no_verdict",
         ),
+    ),
+    Mutation(
+        "a case of the tree that did not run goes unnoticed",
+        CONFORM,
+        "unrun, foreign = sorted(tree - ran), sorted(ran - tree)",
+        "unrun, foreign = [], sorted(ran - tree)",
+        (T_CONF + "test_a_report_from_the_right_root_that_ran_only_some_cases_is_no_verdict",),
     ),
     Mutation(
         "a case the tree does not hold is accepted in the report",
@@ -1155,6 +1162,16 @@ MUTATIONS: tuple[Mutation, ...] = (
         (T_REP + "test_a_report_whose_root_is_not_a_path_is_refused",),
     ),
     Mutation(
+        "a relative root is accepted, to be resolved by whoever reads it",
+        MUTATION,
+        "    if root is not None and not os.path.isabs(root):",
+        "    if False:",
+        (
+            T_REP + "test_a_report_whose_root_is_relative_is_refused",
+            T_CONF + "test_a_report_whose_root_is_relative_is_no_verdict",
+        ),
+    ),
+    Mutation(
         "probe_command drops the root the runner reported",
         MUTATION,
         "    return Verdict(ran=ran, failures=failures, root=root)",
@@ -1182,8 +1199,9 @@ MUTATIONS: tuple[Mutation, ...] = (
         "the gate report says nothing about what the baseline ran",
         MUTATION,
         # No trailing comma: the matcher drops the magic one before `)`.
-        "        baseline,\n        baseline_ran,\n        baseline_verdict.root",
-        "        baseline,\n        frozenset(),\n        None",
+        "        baseline,\n        baseline_ran,\n"
+        "        baseline_verdict.root,\n        src_path",
+        "        baseline,\n        frozenset(),\n        None,\n        src_path",
         (
             T_REP + "test_the_gate_writes_its_report_where_the_environment_says",
             T_GATE + "test_the_kv_gate_passes_over_its_own_tree",

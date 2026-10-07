@@ -124,9 +124,11 @@ it keeps to the same contract:
   verdict, because a tree with no cases is an error, not a pass;
 - `failures` is a list of `{"id": str, "message": str}`; every `id` must be in
   `cases`, and `message` is free text for people;
-- `root`, if present, is a string: the fixture root the cases were read
-  from. `probe_command` passes it through; the reusable workflow **requires**
-  it;
+- `root`, if present, is the fixture root the cases were read from, as an
+  **absolute** path. A relative one is refused as a malformed report: relative
+  to the runner's working directory or the reader's, the same string can
+  name two different trees. `probe_command` passes it through; the reusable
+  workflow **requires** it;
 - it exits **1 exactly when `failures` is non-empty**, 0 when it is empty, and
   2 with no file when there is no verdict. A report the exit code contradicts
   is discarded as no verdict.
@@ -333,6 +335,25 @@ The step passes only when all of these hold:
 So the gate has to probe through `probe_command`, or build `Verdict(...,
 root=...)` itself, and the command has to run one `gate()` call. A second
 call finds the report already written and raises.
+
+The gate report is one JSON object, versioned by `kindkit_gate_report` (`1`):
+
+    ok             the gate's own verdict, as `GateReport.ok`
+    killed         names of mutants a case caught
+    survived       names of mutants no case caught
+    equivalent     names of mutants excused by an equivalence claim
+    stale          names of mutants whose pattern did not apply
+    bogus          names of mutants claimed equivalent that a case caught
+    broken         names of mutants with no verdict, or a different set of cases
+    ran            case ids the suite ran on the unmutated source
+    root           the fixture root that suite reported, or null
+    source         the absolute path of the implementation file mutated
+
+**What the mutation step does not check: which file was mutated.** A gate
+whose only kill breaks the adapter, a handler, or the second implementation
+instead of the reference implementation passes, because nothing tells the
+workflow which file is the reference. The report records `source` so that a
+caller, or a reviewer reading the log, can check it; the step prints it.
 
 **A kind needs a kindkit new enough for all of this.** That means the
 `root` key, `KINDKIT_REPORT_JSON` and `KINDKIT_GATE_REPORT`. rowspec's

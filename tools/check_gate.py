@@ -89,7 +89,10 @@ def check_gate(root: str, command: str) -> int:
         count = len(ran) if isinstance(ran, list) else "no"
         return _say(2, f"the gate's suite ran {count} case(s); {root!r} holds {len(tree)}")
 
-    print(f"\nthe gate killed {len(data['killed'])} mutant(s) over all {len(tree)} case(s)")
+    print(
+        f"\nthe gate killed {len(data['killed'])} mutant(s) of {data.get('source')!r} "
+        f"over all {len(tree)} case(s)"
+    )
     return 0
 
 

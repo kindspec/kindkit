@@ -73,9 +73,14 @@ def test_a_suite_with_a_failing_case_exits_one():
 
 def test_a_suite_that_ran_only_a_subtree_is_no_verdict():
     # The runner is right about what it ran and exits 0. What it ran is not
-    # the tree the workflow named.
+    # the tree the workflow named. (Refused by the root check, too.)
     subtree = os.path.join(KV_TREE, "parse")
     assert conform.conform(KV_TREE, _kv("Good", subtree)) == 2
+
+
+def test_a_report_from_the_right_root_that_ran_only_some_cases_is_no_verdict():
+    # Same root, fewer cases: only the every-case-ran check can refuse this.
+    assert conform.conform(KV_TREE, _fake(_report(KV_IDS[:2]), 0)) == 2
 
 
 def test_a_suite_that_ran_a_case_outside_the_tree_is_no_verdict():
@@ -182,3 +187,33 @@ def test_a_second_implementation_that_is_the_suite_command_is_refused():
     assert conform.conform(KV_TREE, command, differs_from=command) == 2
     assert conform.conform(KV_TREE, f"  {command}\n", differs_from=command) == 2
     assert conform.conform(KV_TREE, _kv("Alt"), differs_from=command) == 0
+
+
+#: A runner not built on kindkit.cli that reads ROOT relative to ITS working
+#: directory and reports it exactly as it was given -- honestly, and uselessly.
+RELATIVE_ROOT_RUNNER = """
+import importlib.util, json, os, sys
+sys.path.insert(0, sys.argv[1])
+from kindkit.runner import run
+spec = importlib.util.spec_from_file_location("kv", os.path.join(sys.argv[1], "tests", "kvkind.py"))
+module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+report = run(module.adapter(module.Good), sys.argv[2], report=lambda _m: None)
+with open(os.environ["KINDKIT_REPORT_JSON"], "w") as handle:
+    json.dump({"kindkit_report": 1, "cases": list(report.ran), "root": sys.argv[2],
+               "failures": [{"id": i, "message": m} for i, m in report.failed]}, handle)
+sys.exit(1 if report.failed else 0)
+"""
+
+
+def test_a_report_whose_root_is_relative_is_no_verdict(tmp_path, monkeypatch):
+    # The runner reads good/kvcopy and reports "kvcopy"; resolved against
+    # conform's own directory that names the BROKEN ./kvcopy. A relative root
+    # names a different tree depending on who reads it.
+    shutil.copytree(_broken_copy(tmp_path), tmp_path / "kvcopy")
+    shutil.copytree(KV_TREE, tmp_path / "good" / "kvcopy")
+    monkeypatch.chdir(tmp_path)
+    command = "cd good && " + shlex.join(
+        [sys.executable, "-c", RELATIVE_ROOT_RUNNER, REPO_ROOT, "kvcopy"]
+    )
+    assert conform.conform("kvcopy", command) == 2

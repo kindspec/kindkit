@@ -560,6 +560,10 @@ def _parse_report(text: str) -> tuple[frozenset[str], frozenset[str], str | None
     root = data.get("root")
     if root is not None and not isinstance(root, str):
         raise bad("'root' is not a path")
+    if root is not None and not os.path.isabs(root):
+        # Relative to whose working directory? The runner's and the reader's
+        # can differ, and then the same string names two different trees.
+        raise bad(f"'root' {root!r} is not an absolute path")
     return frozenset(cases), failing, root
 
 
@@ -588,6 +592,8 @@ class GateReport:
     ran: frozenset[str] = frozenset()
     #: The fixture root the baseline probe reported, if it reported one.
     root: str | None = None
+    #: The implementation file the gate mutated.
+    source: str | None = None
 
     def to_json(self) -> dict[str, object]:
         """What ``KINDKIT_GATE_REPORT`` receives: the verdicts, and what ran."""
@@ -602,6 +608,7 @@ class GateReport:
             "broken": [name for name, _ in self.broken],
             "ran": sorted(self.ran),
             "root": self.root,
+            "source": self.source,
         }
 
     @property
@@ -776,6 +783,7 @@ def gate(
         baseline,
         baseline_ran,
         baseline_verdict.root,
+        src_path,
     )
     _write_gate_report(result)
     report(f"\n{result.summary()}")

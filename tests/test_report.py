@@ -343,6 +343,15 @@ def test_a_report_whose_root_is_not_a_path_is_refused(tmp_path):
         _parse_report(json.dumps({REPORT_FORMAT_KEY: 1, "cases": ["a"], "failures": [], "root": 7}))
 
 
+def test_a_report_whose_root_is_relative_is_refused():
+    from kindkit.mutation import _parse_report
+
+    with pytest.raises(GateError, match="not an absolute path"):
+        _parse_report(
+            json.dumps({REPORT_FORMAT_KEY: 1, "cases": ["a"], "failures": [], "root": "kvcopy"})
+        )
+
+
 def _gate_kv(tmp_path, mutants):
     runner = _runner(tmp_path)
     return gate(
@@ -363,6 +372,7 @@ def test_the_gate_writes_its_report_where_the_environment_says(tmp_path, monkeyp
     assert data["kindkit_gate_report"] == 1
     assert data["killed"] == ["no-equals"]
     assert set(data["ran"]) == _kv_ids() and data["root"] == KV_TREE
+    assert data["source"] == KVKIND
 
 
 def test_a_gate_report_already_there_is_refused_not_replaced(tmp_path, monkeypatch):
