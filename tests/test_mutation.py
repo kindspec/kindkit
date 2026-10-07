@@ -322,8 +322,48 @@ def test_a_probe_that_deletes_what_it_was_handed_is_a_hard_failure(tmp_path):
 CACHED = 'MARK = "aaa"\n'
 
 
-@pytest.mark.parametrize("prefix", [False, True], ids=["beside-source", "pycache-prefix"])
-def test_a_mutant_is_never_served_the_previous_probes_bytecode(tmp_path, monkeypatch, prefix):
+_CHILD_PROBE = """
+import importlib.util, sys
+spec = importlib.util.spec_from_file_location("under_test", sys.argv[1])
+module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+print(module.MARK)
+"""
+
+
+def _in_process(path: str) -> str:
+    spec = importlib.util.spec_from_file_location("under_test", path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module.MARK
+
+
+def _in_a_child_without_a_prefix(path: str) -> str:
+    env = {k: v for k, v in os.environ.items() if k != "PYTHONPYCACHEPREFIX"}
+    env.pop("PYTHONDONTWRITEBYTECODE", None)
+    done = subprocess.run(
+        [sys.executable, "-c", _CHILD_PROBE, path],
+        capture_output=True,
+        text=True,
+        env=env,
+        check=True,
+    )
+    return done.stdout.strip()
+
+
+@pytest.mark.parametrize(
+    ("gate_prefix", "load", "cached_beside"),
+    [
+        (False, _in_process, True),
+        (True, _in_process, False),
+        (True, _in_a_child_without_a_prefix, True),
+    ],
+    ids=["beside-source", "pycache-prefix", "gate-prefix-child-none"],
+)
+def test_a_mutant_is_never_served_the_previous_probes_bytecode(
+    tmp_path, monkeypatch, gate_prefix, load, cached_beside
+):
     """The one wrong-bytes failure the same-path property does NOT make loud.
 
     A probe reading the wrong FILE reads it for the baseline too: everything
@@ -332,26 +372,27 @@ def test_a_mutant_is_never_served_the_previous_probes_bytecode(tmp_path, monkeyp
     correct and silently wrong verdicts -- measured at exit 0 over a mutant
     the suite provably detects.
 
-    Under `PYTHONPYCACHEPREFIX` the `.pyc` is not beside the source at all,
-    and a purge that only looked there found nothing and said nothing
-    (kindspec/kindkit#11).
+    Where the `.pyc` lands depends on the prefix of whoever imports the file,
+    which need not be the gate's (kindspec/kindkit#11). Each case caches in
+    one place only, so each place the purge clears is needed by one of them.
+    The prefix is set or cleared explicitly: an ambient PYTHONPYCACHEPREFIX
+    would otherwise turn the beside-source case into a second prefix case.
     """
-    if prefix:
-        monkeypatch.setattr(sys, "pycache_prefix", str(tmp_path / "prefix"))
+    monkeypatch.setattr(sys, "pycache_prefix", str(tmp_path / "prefix") if gate_prefix else None)
     source = tmp_path / "impl.py"
     source.write_text(CACHED)
     scratch = str(tmp_path / "under_test.py")
-    cache_dir = os.path.dirname(importlib.util.cache_from_source(scratch))
-    cached = os.path.join(cache_dir, "under_test.*.pyc")
+    if cached_beside:
+        cached = str(tmp_path / "__pycache__" / "under_test.*.pyc")
+    else:
+        cached = os.path.join(
+            os.path.dirname(importlib.util.cache_from_source(scratch)), "under_test.*.pyc"
+        )
 
     def probe(path: str) -> Verdict:
         # Every write looks to the loader like it happened in the same second.
         os.utime(path, (1_700_000_000, 1_700_000_000))
-        spec = importlib.util.spec_from_file_location("under_test", path)
-        assert spec is not None and spec.loader is not None
-        module = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(module)
-        return Verdict({"mark"} if module.MARK != "aaa" else ())
+        return Verdict({"mark"} if load(path) != "aaa" else ())
 
     report = gate(
         source=str(source),
@@ -362,8 +403,8 @@ def test_a_mutant_is_never_served_the_previous_probes_bytecode(tmp_path, monkeyp
     )
     assert report.killed == ("mark",)
     assert glob.glob(cached), (
-        "no bytecode was cached at all, so this test could not have caught "
-        "the defect it names: bytecode caching is off in this environment"
+        "no bytecode was cached where this case expects it, so this test could "
+        "not have caught the defect it names"
     )
 
 

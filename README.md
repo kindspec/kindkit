@@ -181,13 +181,14 @@ probe doing nothing more exotic than `spec_from_file_location`: exit 0 over a
 mutant the suite provably detects. The kit purges `<stem>.*.pyc` on each
 write in two places: `<scratch dir>/__pycache__/`, and wherever the gate's
 own interpreter caches -- which differs under `PYTHONPYCACHEPREFIX`, and is
-also where a probe's subprocess caches when it inherits the gate's
-environment. What the probe still owns: a subprocess given a *different*
-prefix, or bytecode copied anywhere else, is invisible to the kit. Such a
-probe removes the whole class rather than the instance by running its
+also where a probe's subprocess caches when it inherits an **absolute**
+prefix from the gate's environment. What the probe still owns: a subprocess
+given a *different* prefix, a *relative* prefix resolved against a different
+working directory, or bytecode copied anywhere else, is invisible to the kit.
+Such a probe removes the whole class rather than the instance by running its
 subprocess with `-B` / `PYTHONDONTWRITEBYTECODE=1`, or with a prefix that is
-fresh for every probe -- which is what this repository's own gate does in
-`tools/mutation_gate.py`.
+fresh for every probe. This repository's own gate, `tools/mutation_gate.py`,
+does the analogous thing for its pytest runs: a fresh prefix per mutation.
 
 ## The standard this has to meet
 
