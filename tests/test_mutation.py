@@ -322,7 +322,8 @@ def test_a_probe_that_deletes_what_it_was_handed_is_a_hard_failure(tmp_path):
 CACHED = 'MARK = "aaa"\n'
 
 
-def test_a_mutant_is_never_served_the_previous_probes_bytecode(tmp_path):
+@pytest.mark.parametrize("prefix", [False, True], ids=["beside-source", "pycache-prefix"])
+def test_a_mutant_is_never_served_the_previous_probes_bytecode(tmp_path, monkeypatch, prefix):
     """The one wrong-bytes failure the same-path property does NOT make loud.
 
     A probe reading the wrong FILE reads it for the baseline too: everything
@@ -330,10 +331,18 @@ def test_a_mutant_is_never_served_the_previous_probes_bytecode(tmp_path):
     only where mtime and size collide, so the run ends with a MIXTURE of
     correct and silently wrong verdicts -- measured at exit 0 over a mutant
     the suite provably detects.
+
+    Under `PYTHONPYCACHEPREFIX` the `.pyc` is not beside the source at all,
+    and a purge that only looked there found nothing and said nothing
+    (kindspec/kindkit#11).
     """
+    if prefix:
+        monkeypatch.setattr(sys, "pycache_prefix", str(tmp_path / "prefix"))
     source = tmp_path / "impl.py"
     source.write_text(CACHED)
-    cached = str(tmp_path / "__pycache__" / "under_test.*.pyc")
+    scratch = str(tmp_path / "under_test.py")
+    cache_dir = os.path.dirname(importlib.util.cache_from_source(scratch))
+    cached = os.path.join(cache_dir, "under_test.*.pyc")
 
     def probe(path: str) -> Verdict:
         # Every write looks to the loader like it happened in the same second.
@@ -348,7 +357,7 @@ def test_a_mutant_is_never_served_the_previous_probes_bytecode(tmp_path):
         source=str(source),
         mutants=[Mutant("mark", 'MARK = "aaa"', 'MARK = "bbb"')],
         probe=probe,
-        scratch=str(tmp_path / "under_test.py"),
+        scratch=scratch,
         report=quiet,
     )
     assert report.killed == ("mark",)
