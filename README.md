@@ -97,13 +97,20 @@ has now found in its own tooling more times than any other.
 by its `kindkit_report` key:
 
 ```json
-{"kindkit_report": 1, "cases": ["parse/ok", "merge/x"], "failures": [{"id": "merge/x", "message": "..."}]}
+{"kindkit_report": 1, "cases": ["parse/ok", "merge/x"], "failures": [{"id": "merge/x", "message": "..."}], "root": "/abs/path/to/cases"}
 ```
 
-`cases` lists what **ran**. The file is written only when there is a verdict,
-so its absence means the same as exit 2, and a file already at `PATH` is
-removed before the run. The printed summary is prose for people and may change;
-read this instead.
+`cases` lists what **ran**, and `root` is the absolute path of the tree they
+were read from. The file is written only when there is a verdict, so its
+absence means the same as exit 2, and a file already at `PATH` is removed
+before the run. The printed summary is prose for people and may change; read
+this instead.
+
+With no `--report-json`, the runner takes the path from the environment
+variable `KINDKIT_REPORT_JSON`, and there it **refuses** a file already at
+the path rather than removing it: that means a second runner was handed the
+same path. The reusable workflow asks this way, because a command is free text
+and an environment variable reaches the runner whatever the text ends with.
 
 A runner not built on `kindkit.cli` can still be probed with `probe_command` if
 it keeps to the same contract:
@@ -116,6 +123,9 @@ it keeps to the same contract:
   verdict, because a tree with no cases is an error, not a pass;
 - `failures` is a list of `{"id": str, "message": str}`; every `id` must be in
   `cases`, and `message` is free text for people;
+- `root`, if present, is a string: the fixture root the cases were read
+  from. `probe_command` passes it through; the reusable workflow **requires**
+  it;
 - it exits **1 exactly when `failures` is non-empty**, 0 when it is empty, and
   2 with no file when there is no verdict. A report the exit code contradicts
   is discarded as no verdict.
@@ -244,52 +254,110 @@ fixture root and three shell commands:
 ```yaml
 jobs:
   kind:
+    permissions:
+      contents: read
+      actions: read      # required: see "Pin `uses:` to a commit" below
     uses: kindspec/kindkit/.github/workflows/kind.yml@<commit>
     with:
       fixture-root: conformance/cases
       suite: cd conformance && uv run python run_cases.py
       second-implementation: cd conformance && uv run python run_cases.py mykind_alt
-      mutants: just mutants
+      mutants: cd conformance && uv run python mutants.py
 ```
 
-It is **one job, named `conformance`**, and its gates are steps. Each step
-runs even when an earlier one is red, so one failure cannot hide whether the
-others ran:
+It is **one job, named `conformance`**, and its gates are steps. Each gate
+runs even when an earlier *gate* is red, so one failure cannot hide whether
+the others ran. The setup steps before them -- checkout, `uv`, `just`, and
+fetching kindkit's tools -- are not like that. If one of those fails, the
+gates still run, and fail too, for want of the tools.
 
     the case tree follows the convention   tools/validate_case_tree.py <fixture-root>
     the reference implementation passes    tools/conform.py <fixture-root> <suite>
-    the second implementation passes       tools/conform.py <fixture-root> <second-implementation>
-    the suite must be able to fail         <mutants>, which must exit 0
+    the second implementation passes       tools/conform.py --differs-from <suite> <fixture-root> <second-implementation>
+    the suite must be able to fail         tools/check_gate.py <fixture-root> <mutants>
 
-`suite` and `second-implementation` must keep the `--report-json` contract
-under "Using the runner". `tools/conform.py` appends `--report-json PATH` and
-passes only when **the cases the report says ran are exactly the case
-directories under `fixture-root`**, and none of them failed. A runner pointed
-at a different directory, or at a subtree, exits 0 over what it found; here
-that is exit 2, no verdict. So is a missing or empty tree, a runner that
-writes no report, and a report its exit code contradicts. A blank `mutants`
-command is refused rather than run, because `bash -c ""` exits 0.
+**The two suite steps** run their command as written, with
+`KINDKIT_REPORT_JSON` naming a fresh path, and read the report under "Using
+the runner". They pass only when all three hold:
+
+- the report's `root` is `fixture-root`;
+- the cases it ran are exactly the case directories under that root;
+- none of them failed.
+
+Matching case *names* alone is not enough. A runner that falls back to its
+own default tree, or reads a same-named copy elsewhere, reports the same ids
+from another directory, so a report with no `root`, or a different one, is
+exit 2: no verdict. So is a runner pointed at a subtree, a missing or empty
+tree, a missing report, and a report its exit code contradicts.
 
 **The second implementation is a required input, not an option.** rowspec's
 drifted 117 cases behind the moment nothing ran it, and nobody noticed until
-it was wired in as a gate.
+it was wired in as a gate. Its command is refused if it is the suite's
+command with only whitespace changed. Different text that reaches the same
+implementation cannot be told apart from outside, and keeping that honest is
+the kind's job.
 
-**Pin `uses:` to a commit.** The workflow fetches this repository's
-`tools/` at the commit named there. A called workflow is not told that
-commit -- `github.job_workflow_sha` is empty inside it, measured -- so it
-reads the commit from the run's `referenced_workflows`, and fails if the run
-names `kind.yml` at no commit or at more than one. That read uses the job's
-`GITHUB_TOKEN`; it works under `permissions: contents: read` on a public
-repository, and has not been tried on a private one.
+**The mutation step needs the gate's own report, not an exit code.** `true`
+exits 0, and so does `bash -c ""`. The command runs with
+`KINDKIT_GATE_REPORT` naming a fresh path, which `kindkit.gate` writes to.
+The step passes only when all of these hold:
 
-**The check reports as `<your job id> / conformance`.** A ruleset matches a
-required check by that name. Renaming the job here, or splitting it into
-several, would leave every consumer's required check unreported and their
-pull requests stuck at *Expected*, so treat the name as part of the interface
-(kindspec/.github `AGENTS.md` §3.2). For the same reason, moving an existing
-job onto this workflow changes its check name -- a required `conformance`
-becomes `<job id> / conformance` -- and the ruleset has to be edited before
-that change merges, not in it.
+- the report exists;
+- it killed at least one mutant;
+- it has no SURVIVED, STALE, BOGUS or BROKEN mutant;
+- its baseline ran exactly the case directories under `fixture-root`, read
+  from that root.
+
+So the gate has to probe through `probe_command`, or build `Verdict(...,
+root=...)` itself, and the command has to run one `gate()` call. A second
+call finds the report already written and raises.
+
+**A kind needs a kindkit new enough for all of this.** That means the
+`root` key, `KINDKIT_REPORT_JSON` and `KINDKIT_GATE_REPORT`. rowspec's
+current pin does not have them, so adopting the workflow there includes
+bumping the pin.
+
+**Pin `uses:` to a commit, and grant `actions: read`.** The workflow fetches
+this repository's `tools/` at the commit named in `uses:`. A called workflow
+is not told that commit: `github.job_workflow_sha` is empty inside it,
+measured. So it reads the commit from the run's `referenced_workflows`, and
+fails if the run names `kind.yml` at no commit or at more than one.
+
+That read needs `actions: read`, and the workflow requests it alongside
+`contents: read`. A called workflow can hold no more than its caller grants,
+so **the calling job must grant both**, as in the example above. On a public
+repository the read is known to work. On a private one it has not been tried.
+
+**The check reports as `<calling job's name> / conformance`.** The calling
+job's `name:` is used if it has one, and its id otherwise; a matrix adds its
+values (not measured here). A ruleset matches a required check by that name.
+Renaming the job here, or splitting it into several, would leave every
+consumer's required check unreported, and their pull requests stuck at
+*Expected* with no way past. Treat the name as part of the interface
+(kindspec/.github `AGENTS.md` §3.2).
+
+### Adopting it where `conformance` is already a required check
+
+rowspec's case: its ruleset requires `conformance`, a job that also runs
+`just check`, `just test` and corpus checks. The workflow runs only its four
+gates.
+
+1. **Keep what the workflow does not run in a job of your own.** That is
+   lint, tests, and anything kind-specific, such as rowspec's `xlsx-extra`
+   job. If that job keeps the name `conformance`, its required check keeps
+   reporting and needs no ruleset change.
+2. **Move the four gates into a calling job**, say `kind`, and delete them
+   from the old job in the same change, so nothing runs twice. They now
+   report as `kind / conformance`.
+3. **Edit the ruleset immediately before merging that change, not in it.**
+   - If the old `conformance` job survives (step 1), **add** `kind /
+     conformance`. The adopting pull request already produces it.
+   - If the old job goes away, **swap** `conformance` for `kind /
+     conformance`. Do not require both while branches still produce only one
+     of them, and do not drop one requirement and re-add it later.
+
+   Either way, other open branches sit at *Expected* until they take the
+   change, which `strict` makes them do anyway.
 
 This repository calls the workflow on its own toy tree in `check.yml`: the
 `kind` job, with `tests/run_kv.py` as the runner, `kvkind.Alt` as the second

@@ -80,6 +80,10 @@ jobs:
   # calls it. It reports as `kind / conformance`; see kind.yml for why that
   # name must not change.
   kind:
+    # The workflow reads its own run to find the commit it was called at.
+    permissions:
+      contents: read
+      actions: read
     uses: ./.github/workflows/kind.yml
     with:
       fixture-root: tests/fixtures/kv

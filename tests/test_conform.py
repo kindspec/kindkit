@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import os
 import shlex
+import shutil
 import sys
 
 import pytest
@@ -33,22 +34,25 @@ def _kv(impl: str, *args: str) -> str:
 
 
 def _fake(report: object, exit_code: int) -> str:
-    """A command that writes ``report`` where `--report-json` says, and exits."""
+    """A command that writes ``report`` where KINDKIT_REPORT_JSON says, and exits."""
     code = (
-        "import json, sys\n"
-        "path = sys.argv[sys.argv.index('--report-json') + 1]\n"
+        "import json, os, sys\n"
+        "path = os.environ['KINDKIT_REPORT_JSON']\n"
         f"open(path, 'w').write(json.dumps({report!r}))\n"
         f"sys.exit({exit_code})\n"
     )
     return shlex.join([sys.executable, "-c", code])
 
 
-def _report(cases, failures=()) -> dict:
-    return {
+def _report(cases, failures=(), root=KV_TREE) -> dict:
+    out = {
         "kindkit_report": 1,
         "cases": list(cases),
         "failures": [{"id": cid, "message": "wrong"} for cid in failures],
     }
+    if root is not None:
+        out["root"] = root
+    return out
 
 
 def test_the_kv_tree_assumed_here_is_the_one_on_disk():
@@ -115,3 +119,63 @@ def test_the_command_gets_the_report_path_after_a_cd():
 
 def test_a_report_with_a_failure_is_one_even_when_every_case_ran():
     assert conform.conform(KV_TREE, _fake(_report(KV_IDS, KV_IDS[:1]), 1)) == 1
+
+
+# -- which tree the runner read, not only which case names it reported -------
+
+
+def _broken_copy(tmp_path) -> str:
+    """The kv tree, copied elsewhere, with one case broken: same case names."""
+    copy = tmp_path / "kv-copy"
+    shutil.copytree(KV_TREE, copy)
+    (copy / "parse" / "accepts-a-simple-entry" / "input.kv").write_text("a=1\nb\n")
+    return str(copy)
+
+
+def test_a_runner_that_falls_back_to_its_default_tree_is_no_verdict(tmp_path):
+    # The reviewer's case: the command names no root, so the runner reads
+    # tests/fixtures/kv and passes -- over a tree the workflow did not name.
+    assert conform.conform(_broken_copy(tmp_path), _kv("Good")) == 2
+
+
+def test_a_runner_that_read_a_same_named_tree_elsewhere_is_no_verdict(tmp_path):
+    copy = _broken_copy(tmp_path)
+    assert conform.conform(copy, _kv("Good", KV_TREE)) == 2
+
+
+def test_the_broken_copy_is_a_failure_when_the_runner_reads_it(tmp_path):
+    # The control for the two above: the copy really is broken, so a run that
+    # read it says so, and exit 2 above is about WHICH tree, not about this.
+    copy = _broken_copy(tmp_path)
+    assert conform.conform(copy, _kv("Good", copy)) == 1
+
+
+# -- the command is the caller's YAML, with whatever layout it has ----------
+
+
+def test_a_command_ending_in_a_newline_still_reports():
+    # `suite: |` in YAML leaves a trailing newline.
+    assert conform.conform(KV_TREE, _kv("Good") + "\n") == 0
+
+
+def test_a_command_ending_in_a_comment_still_reports():
+    assert conform.conform(KV_TREE, _kv("Good") + "  # the reference") == 0
+
+
+def test_a_report_that_names_no_root_is_no_verdict():
+    # A runner older than the `root` key, or not built on kindkit.cli: which
+    # tree it read is unknown, so its verdict is not one about THIS tree.
+    assert conform.conform(KV_TREE, _fake(_report(KV_IDS, root=None), 0)) == 2
+
+
+def test_a_report_naming_the_tree_through_another_spelling_is_accepted(tmp_path):
+    link = tmp_path / "kv-link"
+    link.symlink_to(KV_TREE)
+    assert conform.conform(str(link), _kv("Good")) == 0
+
+
+def test_a_second_implementation_that_is_the_suite_command_is_refused():
+    command = _kv("Good")
+    assert conform.conform(KV_TREE, command, differs_from=command) == 2
+    assert conform.conform(KV_TREE, f"  {command}\n", differs_from=command) == 2
+    assert conform.conform(KV_TREE, _kv("Alt"), differs_from=command) == 0

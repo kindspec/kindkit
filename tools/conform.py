@@ -1,27 +1,30 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: MIT
-"""Run a kind's suite command and require it to have run the whole tree.
+"""Run a kind's suite command and require it to have run the whole named tree.
 
-    python tools/conform.py <fixture root> <command>
+    python tools/conform.py [--differs-from <command>] <fixture root> <command>
 
-``<command>`` is a shell command that runs the suite against one
-implementation and keeps the runner's ``--report-json`` contract (README,
-"Using the runner"): ``--report-json PATH`` is appended as its last two
-arguments. A runner built on ``kindkit.cli`` does this already.
+``<command>`` is shell text that runs the suite against one implementation.
+It is run as written, with ``KINDKIT_REPORT_JSON`` naming a fresh path for
+the runner's report (README, "Using the runner"); a runner built on
+``kindkit.cli`` writes it there. An environment variable, not appended
+arguments, because the command is free text: after a trailing newline the
+arguments would be a command of their own, and after a trailing ``# comment``
+they would be part of the comment.
 
 Exit codes are the runner's, for the runner's reason:
 
-    0   every case under the root ran, and none failed
+    0   every case under the root ran, from that root, and none failed
     1   at least one case failed -- a verdict about the implementation
-    2   no verdict: the tree is empty or missing, the runner wrote no report,
-        its report contradicts its exit code, or the cases it ran are not
-        the cases under the root
+    2   no verdict: the tree is empty or missing; the runner wrote no
+        report, or one its exit code contradicts; the report names no root,
+        or a different one; the cases it ran are not the cases under the
+        root; or ``--differs-from`` names this same command
 
-The last one is why this exists rather than reading the runner's exit code.
-A runner pointed at a different directory, or at a subtree, exits 0 over the
-cases it found; the workflow names the tree, so the tree is what must have
-run. Every case directory under ``<fixture root>`` has to be in the report's
-``cases``, and nothing else may be.
+Matching case NAMES is not enough on its own. A runner that falls back to its
+own default tree, or reads a copy elsewhere, reports the same ids from a
+different directory; so the report's ``root`` must be the directory named
+here, and every case directory under it must be in ``cases``.
 """
 
 from __future__ import annotations
@@ -37,7 +40,7 @@ sys.path.insert(0, os.path.dirname(_HERE))
 
 from validate_case_tree import TreeError, find_cases  # noqa: E402
 
-from kindkit.cli import EXIT_FAILURES, EXIT_NO_VERDICT, EXIT_OK  # noqa: E402
+from kindkit.cli import EXIT_FAILURES, EXIT_NO_VERDICT, EXIT_OK, REPORT_ENV  # noqa: E402
 from kindkit.mutation import GateError, _parse_report  # noqa: E402
 
 
@@ -46,29 +49,47 @@ def _no_verdict(why: str) -> int:
     return EXIT_NO_VERDICT
 
 
-def conform(root: str, command: str) -> int:
+def tree_ids(root: str) -> set[str]:
+    """Every case id under ``root``, as a runner names them. Raises TreeError."""
+    return {os.path.relpath(path, root).replace(os.sep, "/") for path in find_cases(root)}
+
+
+def same_command(a: str, b: str) -> bool:
+    """The same shell text once layout is set aside."""
+    return a.split() == b.split()
+
+
+def conform(root: str, command: str, differs_from: str | None = None) -> int:
+    if differs_from is not None and same_command(command, differs_from):
+        # A second implementation run by the first one's command is the first
+        # implementation run twice. Different text can still reach the same
+        # code; that much is the caller's to keep honest.
+        return _no_verdict("the second implementation's command is the suite's command")
     try:
-        tree = {os.path.relpath(path, root).replace(os.sep, "/") for path in find_cases(root)}
+        tree = tree_ids(root)
     except TreeError as exc:
         return _no_verdict(str(exc))
 
     with tempfile.TemporaryDirectory(prefix="kindkit-conform-") as scratch:
         path = os.path.join(scratch, "report.json")
-        # `"$@"` hands the appended arguments to the LAST command in the
-        # string, so `cd sub && run` receives them where a runner expects.
-        done = subprocess.run(["bash", "-c", command + ' "$@"', "conform", "--report-json", path])
+        done = subprocess.run(["bash", "-c", command], env={**os.environ, REPORT_ENV: path})
         if done.returncode not in (EXIT_OK, EXIT_FAILURES):
             return _no_verdict(f"the suite exited {done.returncode}")
         if not os.path.exists(path):
-            return _no_verdict("the suite wrote no --report-json file")
+            return _no_verdict(f"the suite wrote no report at ${REPORT_ENV}")
         with open(path, encoding="utf-8") as handle:
             text = handle.read()
     try:
-        ran, failing = _parse_report(text)
+        ran, failing, read_from = _parse_report(text)
     except GateError as exc:
         return _no_verdict(str(exc))
     if (done.returncode == EXIT_FAILURES) != bool(failing):
         return _no_verdict(f"the suite exited {done.returncode} with {len(failing)} failure(s)")
+
+    if read_from is None:
+        return _no_verdict("the report names no 'root', so which tree ran is unknown")
+    if os.path.realpath(read_from) != os.path.realpath(root):
+        return _no_verdict(f"the suite read {read_from!r}, not {os.path.abspath(root)!r}")
 
     unrun, foreign = sorted(tree - ran), sorted(ran - tree)
     if unrun or foreign:
@@ -82,10 +103,16 @@ def conform(root: str, command: str) -> int:
 
 
 def main(argv: list[str]) -> int:
+    differs_from = None
+    if argv[:1] == ["--differs-from"] and len(argv) >= 2:
+        differs_from, argv = argv[1], argv[2:]
     if len(argv) != 2:
-        print(f"usage: {os.path.basename(__file__)} <fixture root> <command>", file=sys.stderr)
+        print(
+            f"usage: {os.path.basename(__file__)} [--differs-from <command>] <root> <command>",
+            file=sys.stderr,
+        )
         return EXIT_NO_VERDICT
-    return conform(argv[0], argv[1])
+    return conform(argv[0], argv[1], differs_from)
 
 
 if __name__ == "__main__":

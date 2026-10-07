@@ -291,3 +291,84 @@ def test_no_verdict_says_what_the_runner_said(tmp_path, capsys):
     )
     assert probe_command([sys.executable, str(loud)]) == Verdict.none()
     assert "the fixture root is gone" in capsys.readouterr().err
+
+
+# --------------------------------------------------------------------------
+# What the reusable workflow reads: the root, the env path, the gate report.
+# --------------------------------------------------------------------------
+
+
+def test_the_report_names_the_root_it_read_as_an_absolute_path(tmp_path, monkeypatch):
+    from kvkind import Good, adapter
+
+    out = tmp_path / "report.json"
+    monkeypatch.chdir(REPO_ROOT)
+    cli.main(adapter(Good), [os.path.join("tests", "fixtures", "kv"), "--report-json", str(out)])
+    assert json.loads(out.read_text(encoding="utf-8"))["root"] == KV_TREE
+
+
+def test_the_report_path_can_come_from_the_environment(tmp_path, monkeypatch):
+    from kvkind import Good, adapter
+
+    out = tmp_path / "report.json"
+    monkeypatch.setenv(cli.REPORT_ENV, str(out))
+    assert cli.main(adapter(Good), [KV_TREE]) == cli.EXIT_OK
+    assert set(json.loads(out.read_text(encoding="utf-8"))["cases"]) == _kv_ids()
+
+
+def test_a_report_already_at_the_environment_path_is_refused_not_replaced(
+    tmp_path, monkeypatch, capsys
+):
+    # There it means a second runner was handed the same path: replacing the
+    # first one's report would hide whatever it found.
+    from kvkind import Good, adapter
+
+    out = tmp_path / "report.json"
+    out.write_text('{"first": true}', encoding="utf-8")
+    monkeypatch.setenv(cli.REPORT_ENV, str(out))
+    assert cli.main(adapter(Good), [KV_TREE]) == cli.EXIT_NO_VERDICT
+    assert out.read_text(encoding="utf-8") == '{"first": true}'
+    assert "another runner" in capsys.readouterr().err
+
+
+def test_probe_command_carries_the_root_into_the_verdict(tmp_path):
+    verdict = probe_command([*_runner(tmp_path), _kv_copy(tmp_path)], cwd=REPO_ROOT)
+    assert verdict.root == KV_TREE
+
+
+def test_a_report_whose_root_is_not_a_path_is_refused(tmp_path):
+    from kindkit.mutation import _parse_report
+
+    with pytest.raises(GateError, match="'root' is not a path"):
+        _parse_report(json.dumps({REPORT_FORMAT_KEY: 1, "cases": ["a"], "failures": [], "root": 7}))
+
+
+def _gate_kv(tmp_path, mutants):
+    runner = _runner(tmp_path)
+    return gate(
+        source=KVKIND,
+        mutants=mutants,
+        probe=lambda path: probe_command([*runner, path], cwd=REPO_ROOT),
+        scratch=str(tmp_path / "kv_gate_under_test.py"),
+        report=lambda _m: None,
+    )
+
+
+def test_the_gate_writes_its_report_where_the_environment_says(tmp_path, monkeypatch):
+    out = tmp_path / "gate.json"
+    monkeypatch.setenv("KINDKIT_GATE_REPORT", str(out))
+    result = _gate_kv(tmp_path, [Mutant("no-equals", *NO_EQUALS_CHECK)])
+    data = json.loads(out.read_text(encoding="utf-8"))
+    assert result.ok and data["ok"] is True
+    assert data["kindkit_gate_report"] == 1
+    assert data["killed"] == ["no-equals"]
+    assert set(data["ran"]) == _kv_ids() and data["root"] == KV_TREE
+
+
+def test_a_gate_report_already_there_is_refused_not_replaced(tmp_path, monkeypatch):
+    out = tmp_path / "gate.json"
+    out.write_text("{}", encoding="utf-8")
+    monkeypatch.setenv("KINDKIT_GATE_REPORT", str(out))
+    with pytest.raises(GateError, match="already"):
+        _gate_kv(tmp_path, [Mutant("no-equals", *NO_EQUALS_CHECK)])
+    assert out.read_text(encoding="utf-8") == "{}"

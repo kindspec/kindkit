@@ -3,8 +3,8 @@
 # workflow".
 #
 # ONE job, and its name is part of the contract. A ruleset matches a required
-# check by name, and a called job reports as `<caller's job id> / <this job's
-# name>`. Renaming `conformance` -- or splitting it into several jobs -- would
+# check by name, and a called job reports as `<caller's job name, or its id
+# when it has no name> / <this job's name>`. Renaming `conformance` -- or splitting it into several jobs -- would
 # leave every consumer's required check unreported, which pins their pull
 # requests at "Expected" with no way past it (kindspec/.github AGENTS.md
 # §3.2). So this stays one job named `conformance`, and its gates are steps.
@@ -20,23 +20,30 @@ on:
       suite:
         description: >-
           Shell command that runs the tree against the reference
-          implementation. `--report-json PATH` is appended to it.
+          implementation. Its runner writes its report where
+          KINDKIT_REPORT_JSON says (kindkit.cli does), naming the root it read.
         type: string
         required: true
       second-implementation:
         description: >-
           Shell command that runs the SAME tree against the second
-          implementation. `--report-json PATH` is appended to it. Required:
-          it is a gate, not an advisory job.
+          implementation, reported the same way. Required: it is a gate, not
+          an advisory job. The suite's own command is refused here.
         type: string
         required: true
       mutants:
-        description: Shell command that runs the kind's mutation gate; must exit 0.
+        description: >-
+          Shell command that runs the kind's mutation gate through
+          kindkit.gate, which writes its report where KINDKIT_GATE_REPORT says.
         type: string
         required: true
 
+# `actions: read` is for the one API read below, which finds the commit this
+# workflow was called at. A called workflow can hold no more than its caller
+# grants, so the CALLING job must grant both of these; see the README.
 permissions:
   contents: read
+  actions: read
 
 jobs:
   conformance:
@@ -79,8 +86,11 @@ jobs:
           echo "KINDKIT=$dest" >> "$GITHUB_ENV"
           echo "kindkit at $sha"
 
-      # Each gate reports independently: a red one must not hide whether the
-      # others ran. All four exit 2, never 0, on a missing or empty tree.
+      # Each of the four gates below runs even when an earlier GATE is red, so
+      # one failure cannot hide whether the others ran. The setup steps above
+      # are not like that: if one fails, the gates still run, and fail for
+      # want of kindkit's tools. All four exit non-zero on a missing or empty
+      # tree.
       - name: the case tree follows the convention
         if: always()
         env:
@@ -96,19 +106,15 @@ jobs:
         if: always()
         env:
           ROOT: ${{ inputs.fixture-root }}
+          SUITE: ${{ inputs.suite }}
           COMMAND: ${{ inputs.second-implementation }}
-        run: python3 "${KINDKIT:?}/tools/conform.py" "$ROOT" "$COMMAND"
+        run: python3 "${KINDKIT:?}/tools/conform.py" --differs-from "$SUITE" "$ROOT" "$COMMAND"
+      # Not the command's exit code -- `true` exits 0, and so does `bash -c ""`.
+      # check_gate.py requires the gate's own report: something killed, no
+      # hole, and a baseline that ran exactly this tree, read from this root.
       - name: the suite must be able to fail
         if: always()
         env:
+          ROOT: ${{ inputs.fixture-root }}
           COMMAND: ${{ inputs.mutants }}
-        # `bash -c ""` exits 0. A blank gate command is a gate that ran
-        # nothing, so it is refused rather than run. (The two suite steps
-        # need no such guard: a blank command writes no report, which
-        # conform.py already reads as no verdict.)
-        run: |
-          if [ -z "${COMMAND//[[:space:]]/}" ]; then
-            echo "::error::the mutants input is blank, so no mutation gate would run"
-            exit 1
-          fi
-          bash -c "$COMMAND"
+        run: python3 "${KINDKIT:?}/tools/check_gate.py" "$ROOT" "$COMMAND"

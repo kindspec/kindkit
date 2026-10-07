@@ -73,10 +73,12 @@ SCHEMA = "case-tree/expect.schema.json"
 VALIDATOR = "tools/validate_case_tree.py"
 EVALUATOR = "tools/jsonschema_min.py"
 CONFORM = "tools/conform.py"
+CHECK_GATE = "tools/check_gate.py"
 
 T_MUT = "tests/test_mutation.py::"
 T_REP = "tests/test_report.py::"
 T_CONF = "tests/test_conform.py::"
+T_GATE = "tests/test_check_gate.py::"
 
 MUTATIONS: tuple[Mutation, ...] = (
     Mutation(
@@ -916,10 +918,10 @@ MUTATIONS: tuple[Mutation, ...] = (
         ),
     ),
     Mutation(
-        "a suite that wrote no report is not noticed",
+        "a suite that wrote no report passes",
         CONFORM,
-        "        if not os.path.exists(path):",
-        "        if False:",
+        '            return _no_verdict(f"the suite wrote no report at ${REPORT_ENV}")',
+        "            return EXIT_OK",
         (T_CONF + "test_a_suite_that_writes_no_report_is_no_verdict",),
     ),
     Mutation(
@@ -945,9 +947,171 @@ MUTATIONS: tuple[Mutation, ...] = (
     Mutation(
         "the report path never reaches the command",
         CONFORM,
-        """command + ' "$@"'""",
-        "command",
+        "env={**os.environ, REPORT_ENV: path}",
+        "env=None",
         (T_CONF + "test_a_suite_that_passes_every_case_in_the_tree_exits_zero",),
+    ),
+    Mutation(
+        "a runner that read another tree with the same case names passes",
+        CONFORM,
+        "    if os.path.realpath(read_from) != os.path.realpath(root):",
+        "    if False:",
+        (
+            T_CONF + "test_a_runner_that_falls_back_to_its_default_tree_is_no_verdict",
+            T_CONF + "test_a_runner_that_read_a_same_named_tree_elsewhere_is_no_verdict",
+        ),
+    ),
+    Mutation(
+        "a report naming no root is taken to be about the named tree",
+        CONFORM,
+        "        return _no_verdict(\"the report names no 'root', so which tree ran is unknown\")",
+        "        read_from = root",
+        (T_CONF + "test_a_report_that_names_no_root_is_no_verdict",),
+    ),
+    Mutation(
+        "the second implementation may be run by the suite's own command",
+        CONFORM,
+        "    if differs_from is not None and same_command(command, differs_from):",
+        "    if False:",
+        (T_CONF + "test_a_second_implementation_that_is_the_suite_command_is_refused",),
+    ),
+    Mutation(
+        "the suite's command respaced counts as a different command",
+        CONFORM,
+        "    return a.split() == b.split()",
+        "    return a == b",
+        (T_CONF + "test_a_second_implementation_that_is_the_suite_command_is_refused",),
+    ),
+    # -- what kindkit.cli and kindkit.gate write for the workflow to read.
+    Mutation(
+        "the runner ignores the report path in the environment",
+        CLI,
+        "    from_env = report_path is None and bool(os.environ.get(REPORT_ENV))",
+        "    from_env = False",
+        (T_REP + "test_the_report_path_can_come_from_the_environment",),
+    ),
+    Mutation(
+        "a second runner replaces the first one's report at the environment path",
+        CLI,
+        "            if from_env:\n                raise FixtureTreeError(",
+        "            if False:\n                raise FixtureTreeError(",
+        (T_REP + "test_a_report_already_at_the_environment_path_is_refused_not_replaced",),
+    ),
+    Mutation(
+        "the report stops naming the root it read",
+        RUNNER,
+        '            out["root"] = self.root',
+        "            pass",
+        (T_REP + "test_the_report_names_the_root_it_read_as_an_absolute_path",),
+    ),
+    Mutation(
+        "the report names its root relative to the runner's working directory",
+        RUNNER,
+        "tuple(failed), os.path.abspath(os.fspath(root))",
+        "tuple(failed), os.fspath(root)",
+        (T_REP + "test_the_report_names_the_root_it_read_as_an_absolute_path",),
+    ),
+    Mutation(
+        "a report whose root is not a path is read anyway",
+        MUTATION,
+        "    if root is not None and not isinstance(root, str):",
+        "    if False:",
+        (T_REP + "test_a_report_whose_root_is_not_a_path_is_refused",),
+    ),
+    Mutation(
+        "probe_command drops the root the runner reported",
+        MUTATION,
+        "    return Verdict(ran=ran, failures=failures, root=root)",
+        "    return Verdict(ran=ran, failures=failures)",
+        (
+            T_REP + "test_probe_command_carries_the_root_into_the_verdict",
+            T_GATE + "test_the_kv_gate_passes_over_its_own_tree",
+        ),
+    ),
+    Mutation(
+        "the gate never writes the report the environment asks for",
+        MUTATION,
+        "    _write_gate_report(result)",
+        "    pass",
+        (T_REP + "test_the_gate_writes_its_report_where_the_environment_says",),
+    ),
+    Mutation(
+        "a second gate replaces the first one's report",
+        MUTATION,
+        'with open(path, "x", encoding="utf-8") as handle:',
+        'with open(path, "w", encoding="utf-8") as handle:',
+        (T_REP + "test_a_gate_report_already_there_is_refused_not_replaced",),
+    ),
+    Mutation(
+        "the gate report says nothing about what the baseline ran",
+        MUTATION,
+        # No trailing comma: the matcher drops the magic one before `)`.
+        "        baseline,\n        baseline_ran,\n        baseline_verdict.root",
+        "        baseline,\n        frozenset(),\n        None",
+        (
+            T_REP + "test_the_gate_writes_its_report_where_the_environment_says",
+            T_GATE + "test_the_kv_gate_passes_over_its_own_tree",
+        ),
+    ),
+    # -- tools/check_gate.py: the workflow's mutation step.
+    Mutation(
+        "a command that ran no gate passes",
+        CHECK_GATE,
+        '            return _say(2, f"the command exited 0 and no gate wrote ${GATE_REPORT_ENV}")',
+        "            return 0",
+        tuple(
+            T_GATE + f"test_a_command_that_exits_zero_without_a_gate_is_no_verdict[{c}]"
+            for c in ("true", "empty", "blank", "no-report")
+        ),
+    ),
+    Mutation(
+        "a gate report with a hole in it passes",
+        CHECK_GATE,
+        '    if holes or not data.get("killed"):',
+        "    if False:",
+        tuple(
+            T_GATE + f"test_a_report_with_a_hole_fails[{c}]"
+            for c in ("survived", "stale", "bogus", "broken", "nothing-killed")
+        ),
+    ),
+    Mutation(
+        "a gate over another tree with the same case names passes",
+        CHECK_GATE,
+        "    if os.path.realpath(read_from) != os.path.realpath(root):",
+        "    if False:",
+        (
+            T_GATE + "test_the_gate_over_a_same_named_tree_elsewhere_is_no_verdict",
+            T_GATE + "test_a_report_about_some_other_run_is_no_verdict[other-root]",
+        ),
+    ),
+    Mutation(
+        "a gate report naming no root is taken to be about the named tree",
+        CHECK_GATE,
+        "        return _say(2, \"the gate's baseline probe reported no root, "
+        'so which tree ran is unknown")',
+        "        read_from = root",
+        (T_GATE + "test_a_report_about_some_other_run_is_no_verdict[no-root]",),
+    ),
+    Mutation(
+        "a gate whose baseline ran part of the tree passes",
+        CHECK_GATE,
+        "    if not isinstance(ran, list) or set(ran) != tree:",
+        "    if False:",
+        (T_GATE + "test_a_report_about_some_other_run_is_no_verdict[fewer-cases]",),
+    ),
+    Mutation(
+        "a gate report in an unknown format is read",
+        CHECK_GATE,
+        "or data.get(GATE_REPORT_FORMAT_KEY) != GATE_REPORT_FORMAT:",
+        "or False:",
+        (T_GATE + "test_a_report_about_some_other_run_is_no_verdict[unknown-format]",),
+    ),
+    Mutation(
+        "a gate that exited non-zero passes on a clean report",
+        CHECK_GATE,
+        "    if done.returncode != 0:",
+        "    if False:",
+        (T_GATE + "test_a_gate_that_exits_non_zero_fails_whatever_its_report_says",),
     ),
 )
 
