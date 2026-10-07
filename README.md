@@ -1,8 +1,10 @@
 # kindkit
 
-**Status: the runner and the mutation gate are extracted; nothing has adopted
-them yet.** The CI workflow is still rowspec's. No kind depends on this
-repository.
+**Status: pre-release, untagged, and in use.** rowspec runs its suite and its
+mutation gate on this kit
+([kindspec/rowspec#46](https://github.com/kindspec/rowspec/pull/46)), as a dev
+dependency pinned to a commit — its `pyproject.toml` names which. The CI
+workflow is still rowspec's.
 
 The shared machinery behind every [kindspec](https://github.com/kindspec) kind:
 the tree-driven conformance runner, the mutation gate, the case-tree convention,
@@ -39,11 +41,14 @@ merge, and assert on a result. It does not know what a row is, what a block is,
 or what a node is. If a change to the kit requires knowing, the abstraction is
 wrong and the honest answer is to leave it in the kind.
 
-One honest limit: **the gate is Python-only.** It splices mutants with
+One honest limit: **the kit is Python.** The gate splices mutants with
 `tokenize`, `ast` and `compile`, so a kind whose reference implementation is
-written in something else gets the runner, the conventions and the workflow,
-and has to bring its own gate. The runner has no such limit — it drives a
-fixture tree and never imports anything of the kind's.
+written in something else has to bring its own gate. The runner never imports
+the case *definitions* — it reads them from the fixture tree — but the
+adapter's handlers are the kind's own Python, so a kind written in another
+language needs a thin Python shim that calls out to it. A runner written
+entirely outside the kit can still be probed, through the `--report-json`
+contract below.
 
 ## Using the runner
 
@@ -174,11 +179,12 @@ that outlived its mutant and was ignored in silence). `from_table` is the
 migration path for a gate already written as a table, and it refuses the
 orphan.
 
-**`probe_command`** runs a runner built on `kindkit.cli.main` in a fresh
-interpreter and reads back its `--report-json`, from a path created for that
-call alone so no earlier report can be read as this one. A timeout, an exit
-code other than 0 or 1, a missing report, or a report its exit code
-contradicts all come back as `Verdict.none()`. A probe that cannot use it builds
+**`probe_command`** runs a runner built on `kindkit.cli.main` — or any runner
+keeping the contract above — in a fresh process and reads back its
+`--report-json`, from a path created for that call alone so no earlier report
+can be read as this one. A timeout, an exit code other than 0 or 1, a missing
+report, or a report its exit code contradicts all come back as
+`Verdict.none()`. A probe that cannot use it builds
 `Verdict(ran=..., failures=...)` itself; both are keyword-only, and `ran` must
 be the **whole** suite on every run -- a probe that stops at the first failure
 turns every kill into BROKEN, because cases that did not run vouch for nothing.
@@ -231,14 +237,17 @@ does the analogous thing for its pytest runs: a fresh prefix per mutation.
 
 ## The standard this has to meet
 
-rowspec is the first consumer and the proof. Adopting the kit must leave its
+rowspec is the first consumer and the proof. Adopting the kit had to leave its
 suite at **410/410 on both implementations** and the gate at **0 survived,
 0 stale** — the same numbers, not merely green.
 
-Measured, driven from an out-of-tree harness against rowspec unchanged (rowspec
-has not adopted the kit): **74 killed, 0 survived, 2 equivalent, 0 stale**, with
-the same verdict and the same killing cases for all 76 mutants as rowspec's own
-gate reports.
+Before adoption, driven from an out-of-tree harness against rowspec unchanged:
+**74 killed, 0 survived, 2 equivalent, 0 stale**, with the same verdict and the
+same killing cases for all 76 mutants as rowspec's own gate reported. rowspec
+then adopted the kit in
+[kindspec/rowspec#46](https://github.com/kindspec/rowspec/pull/46), whose
+description records the suite and the gate measured before and after, and
+compares the gate verdict for verdict.
 
 **A kit designed around one consumer is a kit fitted to that consumer.** If the
 abstraction does not survive contact with rowspec, the honest outcome is to say

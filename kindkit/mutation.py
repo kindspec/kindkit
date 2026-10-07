@@ -365,9 +365,9 @@ class Mutant:
     keyed by name. rowspec kept one in a side table and it outlived the mutant
     it named: an equivalence claim for a mutant that no longer existed, skipped
     in silence because nothing joins a table to a key that is not in it
-    (kindspec/rowspec#37, still open). A claim attached to the thing it
-    excuses cannot outlive it. :func:`from_table` is the migration path, and
-    it refuses the orphan rather than dropping it.
+    (kindspec/rowspec#37, closed when rowspec moved onto this kit). A claim
+    attached to the thing it excuses cannot outlive it. :func:`from_table` is
+    the migration path, and it refuses the orphan rather than dropping it.
     """
 
     name: str

@@ -935,8 +935,11 @@ def _splice(mutation: Mutation, original: str) -> str:
 
     Bytes are what there is for JSON, and the risk they carry is the one the
     token matcher exists to remove: nothing in this repository reformats JSON
-    today, and the day something does, these patterns go quiet. The uniqueness
-    half of the contract is kept by hand here, because that half still applies.
+    today, and the day something does, these patterns stop matching. That is
+    loud rather than silent: the count below raises, `apply` hands the reason
+    back, and `main` scores the mutation BROKEN and fails the run. The
+    uniqueness half of the contract is kept by hand here, because that half
+    still applies.
     """
     if mutation.path.endswith(".py"):
         return apply_mutant(original, mutation.find, mutation.replace)
