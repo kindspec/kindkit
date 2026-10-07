@@ -17,6 +17,16 @@ must never look alike from the outside:
 ``Report.to_json``). It is written only when there IS a verdict, so a missing
 file means the same as exit 2, and a file already at PATH is removed before
 the run so that a crash cannot leave an older run's verdict in its place.
+
+With no ``--report-json``, the path is read from ``KINDKIT_REPORT_JSON``
+instead. That is how the reusable workflow asks: the caller's command is free
+text -- a `cd`, a trailing newline, a trailing comment -- and an environment
+variable reaches the runner whatever the text looks like, where appended
+arguments do not. A file already at that path is refused rather than
+removed, because there it means a second runner was handed the same path.
+
+The report names the ``root`` the runner read, as an absolute path, so a
+reader can refuse a verdict about some other tree with the same case names.
 """
 
 from __future__ import annotations
@@ -32,6 +42,9 @@ from kindkit.runner import Adapter, FixtureTreeError, run
 EXIT_OK = 0
 EXIT_FAILURES = 1
 EXIT_NO_VERDICT = 2
+
+#: Where the report goes when ``--report-json`` is not given.
+REPORT_ENV = "KINDKIT_REPORT_JSON"
 
 
 def main(
@@ -63,14 +76,23 @@ def main(
         help="also write the verdict as JSON to PATH; no verdict, no file",
     )
     args = parser.parse_args(argv)
+    report_path = args.report_json
+    from_env = report_path is None and bool(os.environ.get(REPORT_ENV))
+    if from_env:
+        report_path = os.environ[REPORT_ENV]
 
     try:
-        if args.report_json is not None and os.path.lexists(args.report_json):
-            os.remove(args.report_json)
+        if report_path is not None and os.path.lexists(report_path):
+            if from_env:
+                raise FixtureTreeError(
+                    f"a report is already at {report_path!r}, the path {REPORT_ENV} names: "
+                    "another runner was handed the same path, and one would hide the other"
+                )
+            os.remove(report_path)
         report = run(adapter, args.root, min_cases=args.min_cases)
         print(f"\n{report.summary()}")
-        if args.report_json is not None:
-            _write_atomically(args.report_json, json.dumps(report.to_json(), indent=1) + "\n")
+        if report_path is not None:
+            _write_atomically(report_path, json.dumps(report.to_json(), indent=1) + "\n")
     except (FixtureTreeError, OSError) as exc:
         # Not "0 failures". Nothing was checked -- or the verdict could not be
         # delivered where it was asked for -- so there is no number to give,

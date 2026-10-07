@@ -440,6 +440,9 @@ class Verdict:
 
     ran: Collection[str]
     failures: Collection[str] = ()
+    #: The fixture root the suite read, when the probe knows it.
+    #: ``probe_command`` takes it from the runner's report.
+    root: str | None = None
 
     @property
     def reached(self) -> bool:
@@ -502,11 +505,11 @@ def probe_command(
             return Verdict.none()
         with open(path, encoding="utf-8") as handle:
             text = handle.read()
-    ran, failures = _parse_report(text)
+    ran, failures, root = _parse_report(text)
     if (done.returncode == EXIT_FAILURES) != bool(failures):
         _say_why(done, f"exited {done.returncode} with {len(failures)} failure(s) in its report")
         return Verdict.none()
-    return Verdict(ran=ran, failures=failures)
+    return Verdict(ran=ran, failures=failures, root=root)
 
 
 def _say_why(done: subprocess.CompletedProcess[str], what: str) -> None:
@@ -517,8 +520,8 @@ def _say_why(done: subprocess.CompletedProcess[str], what: str) -> None:
         print(f"    | {line}", file=sys.stderr)
 
 
-def _parse_report(text: str) -> tuple[frozenset[str], frozenset[str]]:
-    """``(ran, failing ids)`` from a ``--report-json`` file, or a GateError.
+def _parse_report(text: str) -> tuple[frozenset[str], frozenset[str], str | None]:
+    """``(ran, failing ids, root)`` from a ``--report-json`` file, or a GateError.
 
     A report the kit cannot read is not "no verdict" -- the runner claimed one
     -- and must not be read loosely either: ``"cases": "ab"`` iterates as two
@@ -554,7 +557,22 @@ def _parse_report(text: str) -> tuple[frozenset[str], frozenset[str]]:
     failing = frozenset(f["id"] for f in failures)
     if not failing <= set(cases):
         raise bad(f"'failures' names case(s) not in 'cases': {sorted(failing - set(cases))[:5]}")
-    return frozenset(cases), failing
+    root = data.get("root")
+    if root is not None and not isinstance(root, str):
+        raise bad("'root' is not a path")
+    if root is not None and not os.path.isabs(root):
+        # Relative to whose working directory? The runner's and the reader's
+        # can differ, and then the same string names two different trees.
+        raise bad(f"'root' {root!r} is not an absolute path")
+    return frozenset(cases), failing, root
+
+
+#: Where ``gate`` writes its report as JSON, when set. The reusable workflow
+#: sets it, so that "the gate ran, over this tree, and killed something" is
+#: read from the gate rather than inferred from an exit code any command has.
+GATE_REPORT_ENV = "KINDKIT_GATE_REPORT"
+GATE_REPORT_FORMAT_KEY = "kindkit_gate_report"
+GATE_REPORT_FORMAT = 1
 
 
 @dataclass(frozen=True)
@@ -569,6 +587,29 @@ class GateReport:
     broken: tuple[tuple[str, str], ...]
     #: Case ids that fail WITHOUT any mutation. Kills are counted against this.
     baseline: frozenset[str]
+    #: Case ids the suite ran on the unmutated source -- and so on every
+    #: mutant, since a mutant that ran anything else is BROKEN.
+    ran: frozenset[str] = frozenset()
+    #: The fixture root the baseline probe reported, if it reported one.
+    root: str | None = None
+    #: The implementation file the gate mutated.
+    source: str | None = None
+
+    def to_json(self) -> dict[str, object]:
+        """What ``KINDKIT_GATE_REPORT`` receives: the verdicts, and what ran."""
+        return {
+            GATE_REPORT_FORMAT_KEY: GATE_REPORT_FORMAT,
+            "ok": self.ok,
+            "killed": list(self.killed),
+            "survived": list(self.survived),
+            "equivalent": list(self.equivalent),
+            "stale": [name for name, _ in self.stale],
+            "bogus": [name for name, _ in self.bogus],
+            "broken": [name for name, _ in self.broken],
+            "ran": sorted(self.ran),
+            "root": self.root,
+            "source": self.source,
+        }
 
     @property
     def ok(self) -> bool:
@@ -740,7 +781,11 @@ def gate(
         tuple(bogus),
         tuple(broken),
         baseline,
+        baseline_ran,
+        baseline_verdict.root,
+        src_path,
     )
+    _write_gate_report(result)
     report(f"\n{result.summary()}")
     if not killed:
         report("\n  NOTHING WAS KILLED. Every mutant was excused or went unmeasured, so")
@@ -759,6 +804,25 @@ def gate(
     for name in survived:
         report(f'  hole: nothing in the suite detects "{name}"')
     return result
+
+
+def _write_gate_report(result: GateReport) -> None:
+    """Write ``result`` where ``KINDKIT_GATE_REPORT`` says, if it says anywhere.
+
+    Exclusive creation: a file already there means a second gate in the same
+    command, and letting the later one replace the earlier would report on
+    half of what ran.
+    """
+    path = os.environ.get(GATE_REPORT_ENV)
+    if not path:
+        return
+    try:
+        with open(path, "x", encoding="utf-8") as handle:
+            json.dump(result.to_json(), handle, indent=1)
+    except FileExistsError:
+        raise GateError(
+            f"a gate report is already at {path!r}: one {GATE_REPORT_ENV} per gate run"
+        ) from None
 
 
 def _anchored(path: str | os.PathLike[str], what: str) -> str:

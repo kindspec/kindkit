@@ -36,8 +36,8 @@ mutants:
     uv run python tools/mutation_gate.py
 
 # Validate a case tree against case-tree/expect.schema.json. Stdlib only, so
-# it runs anywhere the tree can be copied to. NOT wired into `check`: the CI
-# gate is owned elsewhere -- see kindspec/kindkit#4.
+# it runs anywhere the tree can be copied to. In CI it runs as the first gate
+# of the reusable workflow, .github/workflows/kind.yml.
 cases +ROOTS='tests/fixtures/kv':
     uv run python tools/validate_case_tree.py {{ROOTS}}
 

@@ -108,6 +108,8 @@ class Report:
     ran: tuple[str, ...]
     #: ``(case id, message)``, one per distinct failure.
     failed: tuple[tuple[str, str], ...] = ()
+    #: The absolute path of the fixture root the cases were read from.
+    root: str | None = None
 
     @property
     def cases(self) -> int:
@@ -132,11 +134,14 @@ class Report:
         for people and may change. ``cases`` lists what RAN, so a reader can
         refuse a failing id that is not among them.
         """
-        return {
+        out: dict[str, object] = {
             REPORT_FORMAT_KEY: REPORT_FORMAT,
             "cases": list(self.ran),
             "failures": [{"id": cid, "message": message} for cid, message in self.failed],
         }
+        if self.root is not None:
+            out["root"] = self.root
+        return out
 
 
 def discover(root: str | os.PathLike[str], fixture_suffixes: Sequence[str]) -> list[Case]:
@@ -250,7 +255,7 @@ def run(
         for message in _run_case(adapter, case):
             failed.append((case.id, message))
             report(f"  FAIL {case.id}  {message}")
-    return Report(tuple(case.id for case in cases), tuple(failed))
+    return Report(tuple(case.id for case in cases), tuple(failed), os.path.abspath(os.fspath(root)))
 
 
 def _run_case(adapter: Adapter, case: Case) -> Iterator[str]:
