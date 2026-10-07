@@ -977,6 +977,15 @@ MUTATIONS: tuple[Mutation, ...] = (
         "if False:",
         ("tests/test_case_schema.py::test_a_pattern_the_two_flavours_read_differently_is_refused",),
     ),
+    Mutation(
+        # Version-free on purpose: prefixing the pin moves it off the locked
+        # ruff whatever that is, so a deliberate bump does not stale this entry.
+        "the ruff hook drifts from the ruff the project locks",
+        ".pre-commit-config.yaml",
+        "ruff-pre-commit\n    rev: v",
+        "ruff-pre-commit\n    rev: v0.0.0-",
+        ("tests/test_tooling.py::test_the_ruff_hook_runs_the_ruff_the_project_locks",),
+    ),
 )
 
 
