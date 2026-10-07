@@ -19,6 +19,7 @@ from kindkit.mutation import (
     apply_mutant,
     from_table,
     gate,
+    probe_command,
 )
 from kindkit.runner import (
     CASE_MANIFEST,
@@ -52,6 +53,7 @@ __all__ = [
     "from_table",
     "gate",
     "main",
+    "probe_command",
     "run",
 ]
 

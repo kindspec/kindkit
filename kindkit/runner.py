@@ -33,12 +33,17 @@ from __future__ import annotations
 import json
 import os
 from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 #: A directory is a case **iff** it contains this file. Its presence IS the
 #: case; a directory without one is walked past, which is what makes companion
 #: subdirectories and out-of-tree fixtures possible.
 CASE_MANIFEST = "expect.json"
+
+#: The key and version stamped on a ``--report-json`` file. A reader that does
+#: not recognise the version must not guess at the shape.
+REPORT_FORMAT_KEY = "kindkit_report"
+REPORT_FORMAT = 1
 
 
 class FixtureTreeError(Exception):
@@ -99,17 +104,39 @@ class Adapter:
 class Report:
     """What a run found, and -- as importantly -- how much it looked at."""
 
-    #: How many case directories were discovered and dispatched.
-    cases: int
-    #: One message per distinct failure, prefixed with the case id.
-    failures: list[str] = field(default_factory=list)
+    #: The id of every case that was discovered and dispatched, in run order.
+    ran: tuple[str, ...]
+    #: ``(case id, message)``, one per distinct failure.
+    failed: tuple[tuple[str, str], ...] = ()
+
+    @property
+    def cases(self) -> int:
+        return len(self.ran)
+
+    @property
+    def failures(self) -> list[str]:
+        """One message per distinct failure, prefixed with the case id."""
+        return [f"{cid}: {message}" for cid, message in self.failed]
 
     @property
     def ok(self) -> bool:
-        return not self.failures
+        return not self.failed
 
     def summary(self) -> str:
-        return f"{len(self.failures)} failure(s) across {self.cases} case(s) in the fixture tree"
+        return f"{len(self.failed)} failure(s) across {self.cases} case(s) in the fixture tree"
+
+    def to_json(self) -> dict[str, object]:
+        """The machine-readable form ``--report-json`` writes.
+
+        A probe reads this instead of parsing ``summary()``, which is prose
+        for people and may change. ``cases`` lists what RAN, so a reader can
+        refuse a failing id that is not among them.
+        """
+        return {
+            REPORT_FORMAT_KEY: REPORT_FORMAT,
+            "cases": list(self.ran),
+            "failures": [{"id": cid, "message": message} for cid, message in self.failed],
+        }
 
 
 def discover(root: str | os.PathLike[str], fixture_suffixes: Sequence[str]) -> list[Case]:
@@ -213,12 +240,12 @@ def run(
             f"expected at least {min_cases}"
         )
 
-    failures: list[str] = []
+    failed: list[tuple[str, str]] = []
     for case in cases:
         for message in _run_case(adapter, case):
-            failures.append(f"{case.id}: {message}")
+            failed.append((case.id, message))
             report(f"  FAIL {case.id}  {message}")
-    return Report(len(cases), failures)
+    return Report(tuple(case.id for case in cases), tuple(failed))
 
 
 def _run_case(adapter: Adapter, case: Case) -> Iterator[str]:

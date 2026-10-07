@@ -74,6 +74,7 @@ VALIDATOR = "tools/validate_case_tree.py"
 EVALUATOR = "tools/jsonschema_min.py"
 
 T_MUT = "tests/test_mutation.py::"
+T_REP = "tests/test_report.py::"
 
 MUTATIONS: tuple[Mutation, ...] = (
     Mutation(
@@ -548,6 +549,163 @@ MUTATIONS: tuple[Mutation, ...] = (
             T_MUT + "test_a_mutant_is_never_served_the_previous_probes_bytecode[pycache-prefix]",
             T_MUT
             + "test_a_mutant_is_never_served_the_previous_probes_bytecode[child-inherits-prefix]",
+        ),
+    ),
+    Mutation(
+        "a baseline failing id that never ran is accepted",
+        MUTATION,
+        '        _require_failures_that_ran(baseline_verdict, "the unmutated source")',
+        "        pass",
+        (T_REP + "test_a_failing_id_the_probe_did_not_run_is_a_hard_failure[baseline]",),
+    ),
+    Mutation(
+        "a mutant's failing id that never ran scores a kill",
+        MUTATION,
+        '            _require_failures_that_ran(verdict, f"mutant {mutant.name!r}")',
+        "            pass",
+        (T_REP + "test_a_failing_id_the_probe_did_not_run_is_a_hard_failure[mutant]",),
+    ),
+    Mutation(
+        "the ran-set check compares nothing",
+        MUTATION,
+        "    stray = sorted(frozenset(verdict.failures) - frozenset(verdict.ran))",
+        "    stray = []",
+        (
+            T_REP + "test_a_failing_id_the_probe_did_not_run_is_a_hard_failure[baseline]",
+            T_REP + "test_a_failing_id_the_probe_did_not_run_is_a_hard_failure[mutant]",
+        ),
+    ),
+    Mutation(
+        "a positional Verdict is read as the set that ran",
+        MUTATION,
+        "@dataclass(frozen=True, kw_only=True)",
+        "@dataclass(frozen=True, kw_only=False)",
+        (T_REP + "test_a_positional_verdict_is_refused",),
+    ),
+    Mutation(
+        "a verdict that ran nothing still counts as reached",
+        MUTATION,
+        "        return bool(self.ran)",
+        "        return True",
+        (
+            T_MUT + "test_no_verdict_on_the_unmutated_source_is_a_hard_failure",
+            T_MUT + "test_a_mutant_that_leaves_the_suite_with_no_verdict_is_broken_not_killed",
+        ),
+    ),
+    Mutation(
+        "an old report survives a run that found no verdict",
+        CLI,
+        "        os.remove(args.report_json)",
+        "        pass",
+        (T_REP + "test_no_verdict_writes_no_report_and_removes_an_old_one",),
+    ),
+    Mutation(
+        "a report its exit code contradicts is believed",
+        MUTATION,
+        "    if (done.returncode == EXIT_FAILURES) != bool(failures):",
+        "    if False:",
+        (T_REP + "test_a_report_its_exit_code_disagrees_with_is_no_verdict",),
+    ),
+    Mutation(
+        "a report claiming failures under exit 0 is believed",
+        MUTATION,
+        "    if (done.returncode == EXIT_FAILURES) != bool(failures):",
+        "    if done.returncode == EXIT_FAILURES and not failures:",
+        (T_REP + "test_a_report_its_exit_code_disagrees_with_is_no_verdict[exit-0-with-failures]",),
+    ),
+    Mutation(
+        "a report in an unknown format is read as this one",
+        MUTATION,
+        "    if type(version) is not int or version != REPORT_FORMAT:",
+        "    if False:",
+        (T_REP + "test_a_report_in_an_unknown_format_is_refused",),
+    ),
+    Mutation(
+        "a run that wrote no report is read anyway",
+        MUTATION,
+        "        if done.returncode not in (EXIT_OK, EXIT_FAILURES) or not os.path.exists(path):",
+        "        if done.returncode not in (EXIT_OK, EXIT_FAILURES):",
+        (T_REP + "test_an_implementation_that_will_not_import_is_no_verdict",),
+    ),
+    Mutation(
+        "a mutant that ran fewer cases can be scored equivalent",
+        MUTATION,
+        "            if frozenset(verdict.ran) != baseline_ran:",
+        "            if False:",
+        (T_REP + "test_a_mutant_that_ran_different_cases_is_broken_not_equivalent",),
+    ),
+    Mutation(
+        "a report path that cannot be written exits as a case failure",
+        CLI,
+        "    except (FixtureTreeError, OSError) as exc:",
+        "    except FixtureTreeError as exc:",
+        (T_REP + "test_a_report_path_that_cannot_be_written_is_no_verdict_not_a_failure",),
+    ),
+    Mutation(
+        "a report naming a case twice is read as one",
+        MUTATION,
+        "    if len(set(cases)) != len(cases):",
+        "    if False:",
+        (T_REP + "test_a_malformed_report_is_refused_by_name[cases-dup]",),
+    ),
+    Mutation(
+        "a report whose cases are not a list of ids is read loosely",
+        MUTATION,
+        "    if not isinstance(cases, list) or not all(isinstance(cid, str) for cid in cases):",
+        "    if False:",
+        (
+            T_REP + "test_a_malformed_report_is_refused_by_name[cases-string]",
+            T_REP + "test_a_malformed_report_is_refused_by_name[cases-ints]",
+        ),
+    ),
+    Mutation(
+        "a runner's reason for giving no verdict is dropped",
+        MUTATION,
+        '        print(f"    | {line}", file=sys.stderr)',
+        "        pass",
+        (T_REP + "test_no_verdict_says_what_the_runner_said",),
+    ),
+    Mutation(
+        "a mutant that ran extra cases is measured as if it were the same suite",
+        MUTATION,
+        "            if frozenset(verdict.ran) != baseline_ran:",
+        "            if frozenset(verdict.ran) < baseline_ran:",
+        (T_REP + "test_a_mutant_that_ran_different_cases_is_broken_not_equivalent[more-cases]",),
+    ),
+    Mutation(
+        "a report version of True or 1.0 is read as format 1",
+        MUTATION,
+        "    if type(version) is not int or version != REPORT_FORMAT:",
+        "    if version != REPORT_FORMAT:",
+        (
+            T_REP + "test_a_report_in_an_unknown_format_is_refused[bool]",
+            T_REP + "test_a_report_in_an_unknown_format_is_refused[float]",
+        ),
+    ),
+    Mutation(
+        "a failure message that is not text is accepted",
+        MUTATION,
+        'isinstance(f.get("id"), str) and isinstance(f.get("message"), str)',
+        'isinstance(f.get("id"), str)',
+        (T_REP + "test_a_malformed_report_is_refused_by_name[message-not-text]",),
+    ),
+    Mutation(
+        "a report failing a case it does not list is accepted",
+        MUTATION,
+        "    if not failing <= set(cases):",
+        "    if False:",
+        (T_REP + "test_a_malformed_report_is_refused_by_name[failure-not-in-cases]",),
+    ),
+    Mutation(
+        "a report its exit code contradicts is discarded without saying why",
+        MUTATION,
+        '        _say_why(done, f"exited {done.returncode} with '
+        '{len(failures)} failure(s) in its report")',
+        "        pass",
+        (
+            T_REP + "test_a_report_its_exit_code_disagrees_with_is_no_verdict[exit-1-no-failures]",
+            T_REP
+            + "test_a_report_its_exit_code_disagrees_with_is_no_verdict[exit-0-with-failures]",
         ),
     ),
     Mutation(
