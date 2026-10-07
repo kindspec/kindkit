@@ -1,0 +1,114 @@
+# The reusable workflow a kind calls to run its case tree, its suite, its
+# second implementation and its mutation gate. See README, "Using the
+# workflow".
+#
+# ONE job, and its name is part of the contract. A ruleset matches a required
+# check by name, and a called job reports as `<caller's job id> / <this job's
+# name>`. Renaming `conformance` -- or splitting it into several jobs -- would
+# leave every consumer's required check unreported, which pins their pull
+# requests at "Expected" with no way past it (kindspec/.github AGENTS.md
+# §3.2). So this stays one job named `conformance`, and its gates are steps.
+name: kind
+
+on:
+  workflow_call:
+    inputs:
+      fixture-root:
+        description: The case tree, relative to the repository root.
+        type: string
+        required: true
+      suite:
+        description: >-
+          Shell command that runs the tree against the reference
+          implementation. `--report-json PATH` is appended to it.
+        type: string
+        required: true
+      second-implementation:
+        description: >-
+          Shell command that runs the SAME tree against the second
+          implementation. `--report-json PATH` is appended to it. Required:
+          it is a gate, not an advisory job.
+        type: string
+        required: true
+      mutants:
+        description: Shell command that runs the kind's mutation gate; must exit 0.
+        type: string
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  conformance:
+    name: conformance
+    runs-on: ubuntu-latest
+    steps:
+      # Pinned to commits, not tags; see check.yml for why.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+
+      - name: install just
+        run: |
+          uv tool install rust-just
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+      - name: just is actually on PATH
+        run: just --version
+
+      # The case-tree validator and tools/conform.py are kindkit's, at the
+      # commit the caller pinned in `uses:`. A called workflow is not told
+      # that commit (`github.job_workflow_sha` is empty here, measured), but
+      # the run records it, so read it from there -- and refuse to guess
+      # when the run names this workflow at no commit, or at more than one.
+      - name: fetch kindkit at the commit this workflow was called at
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          sha=$(gh api "repos/${{ github.repository }}/actions/runs/${{ github.run_id }}" --jq '
+            [.referenced_workflows[]
+             | select(.path | startswith("kindspec/kindkit/.github/workflows/kind.yml@"))
+             | .sha] | unique | .[]')
+          if [ "$(printf '%s\n' "$sha" | grep -c .)" != 1 ]; then
+            echo "::error::this run names kind.yml at $(printf '%s' "$sha" | grep -c .) commits; expected 1"
+            exit 1
+          fi
+          dest="$RUNNER_TEMP/kindkit"
+          git init -q "$dest"
+          git -C "$dest" fetch -q --depth 1 https://github.com/kindspec/kindkit "$sha"
+          git -C "$dest" checkout -q FETCH_HEAD
+          test "$(git -C "$dest" rev-parse HEAD)" = "$sha"
+          echo "KINDKIT=$dest" >> "$GITHUB_ENV"
+          echo "kindkit at $sha"
+
+      # Each gate reports independently: a red one must not hide whether the
+      # others ran. All four exit 2, never 0, on a missing or empty tree.
+      - name: the case tree follows the convention
+        if: always()
+        env:
+          ROOT: ${{ inputs.fixture-root }}
+        run: python3 "${KINDKIT:?}/tools/validate_case_tree.py" "$ROOT"
+      - name: the reference implementation passes every case in the tree
+        if: always()
+        env:
+          ROOT: ${{ inputs.fixture-root }}
+          COMMAND: ${{ inputs.suite }}
+        run: python3 "${KINDKIT:?}/tools/conform.py" "$ROOT" "$COMMAND"
+      - name: the second implementation passes every case in the tree
+        if: always()
+        env:
+          ROOT: ${{ inputs.fixture-root }}
+          COMMAND: ${{ inputs.second-implementation }}
+        run: python3 "${KINDKIT:?}/tools/conform.py" "$ROOT" "$COMMAND"
+      - name: the suite must be able to fail
+        if: always()
+        env:
+          COMMAND: ${{ inputs.mutants }}
+        # `bash -c ""` exits 0. A blank gate command is a gate that ran
+        # nothing, so it is refused rather than run. (The two suite steps
+        # need no such guard: a blank command writes no report, which
+        # conform.py already reads as no verdict.)
+        run: |
+          if [ -z "${COMMAND//[[:space:]]/}" ]; then
+            echo "::error::the mutants input is blank, so no mutation gate would run"
+            exit 1
+          fi
+          bash -c "$COMMAND"

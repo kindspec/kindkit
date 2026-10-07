@@ -3,8 +3,9 @@
 **Status: pre-release, untagged, and in use.** rowspec runs its suite and its
 mutation gate on this kit
 ([kindspec/rowspec#46](https://github.com/kindspec/rowspec/pull/46)), as a dev
-dependency pinned to a commit — its `pyproject.toml` names which. The CI
-workflow is still rowspec's.
+dependency pinned to a commit — its `pyproject.toml` names which. rowspec's
+CI is still its own: the reusable workflow below has so far been called only
+by this repository, on its own toy tree.
 
 The shared machinery behind every [kindspec](https://github.com/kindspec) kind:
 the tree-driven conformance runner, the mutation gate, the case-tree convention,
@@ -235,6 +236,65 @@ subprocess with `-B` / `PYTHONDONTWRITEBYTECODE=1`, or with a prefix that is
 fresh for every probe. This repository's own gate, `tools/mutation_gate.py`,
 does the analogous thing for its pytest runs: a fresh prefix per mutation.
 
+## Using the workflow
+
+`.github/workflows/kind.yml` is a reusable workflow. A kind calls it with its
+fixture root and three shell commands:
+
+```yaml
+jobs:
+  kind:
+    uses: kindspec/kindkit/.github/workflows/kind.yml@<commit>
+    with:
+      fixture-root: conformance/cases
+      suite: cd conformance && uv run python run_cases.py
+      second-implementation: cd conformance && uv run python run_cases.py mykind_alt
+      mutants: just mutants
+```
+
+It is **one job, named `conformance`**, and its gates are steps. Each step
+runs even when an earlier one is red, so one failure cannot hide whether the
+others ran:
+
+    the case tree follows the convention   tools/validate_case_tree.py <fixture-root>
+    the reference implementation passes    tools/conform.py <fixture-root> <suite>
+    the second implementation passes       tools/conform.py <fixture-root> <second-implementation>
+    the suite must be able to fail         <mutants>, which must exit 0
+
+`suite` and `second-implementation` must keep the `--report-json` contract
+under "Using the runner". `tools/conform.py` appends `--report-json PATH` and
+passes only when **the cases the report says ran are exactly the case
+directories under `fixture-root`**, and none of them failed. A runner pointed
+at a different directory, or at a subtree, exits 0 over what it found; here
+that is exit 2, no verdict. So is a missing or empty tree, a runner that
+writes no report, and a report its exit code contradicts. A blank `mutants`
+command is refused rather than run, because `bash -c ""` exits 0.
+
+**The second implementation is a required input, not an option.** rowspec's
+drifted 117 cases behind the moment nothing ran it, and nobody noticed until
+it was wired in as a gate.
+
+**Pin `uses:` to a commit.** The workflow fetches this repository's
+`tools/` at the commit named there. A called workflow is not told that
+commit -- `github.job_workflow_sha` is empty inside it, measured -- so it
+reads the commit from the run's `referenced_workflows`, and fails if the run
+names `kind.yml` at no commit or at more than one. That read uses the job's
+`GITHUB_TOKEN`; it works under `permissions: contents: read` on a public
+repository, and has not been tried on a private one.
+
+**The check reports as `<your job id> / conformance`.** A ruleset matches a
+required check by that name. Renaming the job here, or splitting it into
+several, would leave every consumer's required check unreported and their
+pull requests stuck at *Expected*, so treat the name as part of the interface
+(kindspec/.github `AGENTS.md` §3.2). For the same reason, moving an existing
+job onto this workflow changes its check name -- a required `conformance`
+becomes `<job id> / conformance` -- and the ruleset has to be edited before
+that change merges, not in it.
+
+This repository calls the workflow on its own toy tree in `check.yml`: the
+`kind` job, with `tests/run_kv.py` as the runner, `kvkind.Alt` as the second
+implementation and `tests/kv_mutants.py` as the gate.
+
 ## The standard this has to meet
 
 rowspec is the first consumer and the proof. Adopting the kit had to leave its
@@ -275,6 +335,10 @@ its fixture root; a validator applies it alongside the envelope, and the kit
 never learns what is in it.
 
     just cases <root>...      validate a tree (stdlib only, exit 0/1/2)
+
+The reusable workflow runs the same validator on the tree a kind names, so a
+kind cannot adopt the workflow without its tree being checked against the
+convention.
 
 ## Licensing
 

@@ -75,3 +75,14 @@ jobs:
           print(f"the kit pulled in {len(added)} modules, all of them stdlib or its own:")
           print("  " + ", ".join(added))
           PY
+
+  # The reusable workflow, called on the kit's own toy tree the way a kind
+  # calls it. It reports as `kind / conformance`; see kind.yml for why that
+  # name must not change.
+  kind:
+    uses: ./.github/workflows/kind.yml
+    with:
+      fixture-root: tests/fixtures/kv
+      suite: uv run python tests/run_kv.py tests/kvkind.py Good
+      second-implementation: uv run python tests/run_kv.py tests/kvkind.py Alt
+      mutants: uv run python tests/kv_mutants.py

@@ -47,6 +47,34 @@ class Good:
         return "\n".join("" if e is None else f"{e[0]}={e[1]}" for e in structure)
 
 
+class Alt:
+    """A second conforming implementation, written differently from `Good`.
+
+    What the reusable workflow's second-implementation gate runs when the kit
+    calls it on its own tree. Kept free of `Good`'s source fragments, so a
+    mutant of `Good` matches `Good` alone.
+    """
+
+    Malformed = Malformed
+
+    @staticmethod
+    def structure(text: str) -> list[tuple[str, str] | None]:
+        lines = text.split("\n")
+        if any(line and "=" not in line for line in lines):
+            raise Malformed(f"an entry in {text!r} has no '='")
+        return [tuple(line.split("=", 1)) if line else None for line in lines]
+
+    @staticmethod
+    def render(structure: list[tuple[str, str] | None]) -> str:
+        out = []
+        for index, entry in enumerate(structure):
+            if index:
+                out.append("\n")
+            if entry is not None:
+                out.append(entry[0] + "=" + entry[1])
+        return "".join(out)
+
+
 class Raw:
     """The negative control: an implementation whose entire structure is the text.
 

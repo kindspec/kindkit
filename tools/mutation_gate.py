@@ -72,9 +72,11 @@ KVKIND = "tests/kvkind.py"
 SCHEMA = "case-tree/expect.schema.json"
 VALIDATOR = "tools/validate_case_tree.py"
 EVALUATOR = "tools/jsonschema_min.py"
+CONFORM = "tools/conform.py"
 
 T_MUT = "tests/test_mutation.py::"
 T_REP = "tests/test_report.py::"
+T_CONF = "tests/test_conform.py::"
 
 MUTATIONS: tuple[Mutation, ...] = (
     Mutation(
@@ -872,6 +874,80 @@ MUTATIONS: tuple[Mutation, ...] = (
         'if char == "]" and index == class_start:',
         "if False:",
         ("tests/test_case_schema.py::test_a_pattern_the_two_flavours_read_differently_is_refused",),
+    ),
+    # -- tools/conform.py: the reusable workflow's suite steps. Exit 0 is a
+    # -- claim that every case under the named tree ran; each of these makes
+    # -- it a claim about less.
+    Mutation(
+        "a suite that ran a different set of cases than the tree passes",
+        CONFORM,
+        "    if unrun or foreign:",
+        "    if False:",
+        (
+            T_CONF + "test_a_suite_that_ran_only_a_subtree_is_no_verdict",
+            T_CONF + "test_a_suite_that_ran_a_case_outside_the_tree_is_no_verdict",
+        ),
+    ),
+    Mutation(
+        "a case the tree does not hold is accepted in the report",
+        CONFORM,
+        "unrun, foreign = sorted(tree - ran), sorted(ran - tree)",
+        "unrun, foreign = sorted(tree - ran), []",
+        (T_CONF + "test_a_suite_that_ran_a_case_outside_the_tree_is_no_verdict",),
+    ),
+    Mutation(
+        "an empty or missing tree is left to the suite to judge",
+        CONFORM,
+        "    except TreeError as exc:\n        return _no_verdict(str(exc))",
+        "    except TreeError:\n        tree = {'x'}",
+        (
+            T_CONF + "test_an_empty_tree_is_no_verdict_whatever_the_suite_says",
+            T_CONF + "test_a_missing_tree_is_no_verdict",
+        ),
+    ),
+    Mutation(
+        "a suite exiting outside 0 and 1 is read from its report",
+        CONFORM,
+        "        if done.returncode not in (EXIT_OK, EXIT_FAILURES):",
+        "        if False:",
+        (
+            T_CONF
+            + "test_a_suite_exiting_outside_zero_and_one_is_no_verdict_even_with_a_clean_report",
+        ),
+    ),
+    Mutation(
+        "a suite that wrote no report is not noticed",
+        CONFORM,
+        "        if not os.path.exists(path):",
+        "        if False:",
+        (T_CONF + "test_a_suite_that_writes_no_report_is_no_verdict",),
+    ),
+    Mutation(
+        "the workflow believes a report its exit code contradicts",
+        CONFORM,
+        "    if (done.returncode == EXIT_FAILURES) != bool(failing):",
+        "    if False:",
+        (
+            T_CONF + "test_a_report_its_exit_code_contradicts_is_no_verdict[exit-1-no-failures]",
+            T_CONF + "test_a_report_its_exit_code_contradicts_is_no_verdict[exit-0-with-failures]",
+        ),
+    ),
+    Mutation(
+        "a failing case exits green",
+        CONFORM,
+        "    return EXIT_FAILURES if failing else EXIT_OK",
+        "    return EXIT_OK",
+        (
+            T_CONF + "test_a_suite_with_a_failing_case_exits_one",
+            T_CONF + "test_a_report_with_a_failure_is_one_even_when_every_case_ran",
+        ),
+    ),
+    Mutation(
+        "the report path never reaches the command",
+        CONFORM,
+        """command + ' "$@"'""",
+        "command",
+        (T_CONF + "test_a_suite_that_passes_every_case_in_the_tree_exits_zero",),
     ),
 )
 
