@@ -30,7 +30,7 @@ So this module refuses to skip anything, in four distinct ways:
 Nothing here knows what a row is, what a block is, or what a node is. A kind
 supplies three things and no more: the **source file** to break, the
 **mutants**, and a **probe** that runs its suite against a given file and says
-which case ids failed.
+which case ids ran and which of them failed.
 
 The matching machinery is extracted from rowspec's `conformance/mutants.py`,
 where it was verified durable against `ruff format` at line-length 60/79/100/

@@ -587,7 +587,10 @@ MUTATIONS: tuple[Mutation, ...] = (
         MUTATION,
         "        return bool(self.ran)",
         "        return True",
-        (T_MUT + "test_no_verdict_on_the_unmutated_source_is_a_hard_failure",),
+        (
+            T_MUT + "test_no_verdict_on_the_unmutated_source_is_a_hard_failure",
+            T_MUT + "test_a_mutant_that_leaves_the_suite_with_no_verdict_is_broken_not_killed",
+        ),
     ),
     Mutation(
         "an old report survives a run that found no verdict",
@@ -602,6 +605,13 @@ MUTATIONS: tuple[Mutation, ...] = (
         "    if (done.returncode == EXIT_FAILURES) != bool(failures):",
         "    if False:",
         (T_REP + "test_a_report_its_exit_code_disagrees_with_is_no_verdict",),
+    ),
+    Mutation(
+        "a report claiming failures under exit 0 is believed",
+        MUTATION,
+        "    if (done.returncode == EXIT_FAILURES) != bool(failures):",
+        "    if done.returncode == EXIT_FAILURES and not failures:",
+        (T_REP + "test_a_report_its_exit_code_disagrees_with_is_no_verdict[exit-0-with-failures]",),
     ),
     Mutation(
         "a report in an unknown format is read as this one",

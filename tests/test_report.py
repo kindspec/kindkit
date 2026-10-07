@@ -122,19 +122,27 @@ def test_probe_command_does_not_read_the_runners_prose(tmp_path, monkeypatch):
     assert verdict.failures == NO_EQUALS_FAILS
 
 
-def test_an_implementation_that_will_not_import_is_no_verdict(tmp_path):
+def test_an_implementation_that_will_not_import_is_no_verdict(tmp_path, capsys):
     unimportable = _kv_copy(tmp_path, ("class Malformed(Exception):", "class Malformed(Exception)"))
     assert probe_command([*_runner(tmp_path), unimportable]) == Verdict.none()
+    # And for that reason, not because the runner or kindkit failed to load.
+    assert "SyntaxError" in capsys.readouterr().err
 
 
-def test_a_report_its_exit_code_disagrees_with_is_no_verdict(tmp_path):
+@pytest.mark.parametrize(
+    ("code", "failures"),
+    [(1, []), (0, [{"id": "a", "message": "m"}])],
+    ids=["exit-1-no-failures", "exit-0-with-failures"],
+)
+def test_a_report_its_exit_code_disagrees_with_is_no_verdict(tmp_path, code, failures):
     liar = tmp_path / "liar.py"
     liar.write_text(
         "import json, sys\n"
         "path = sys.argv[sys.argv.index('--report-json') + 1]\n"
-        f"json.dump({{{REPORT_FORMAT_KEY!r}: {REPORT_FORMAT}, 'cases': ['a'], 'failures': []}},"
-        " open(path, 'w'))\n"
-        "sys.exit(1)\n",
+        f"report = {{{REPORT_FORMAT_KEY!r}: {REPORT_FORMAT}, 'cases': ['a']}}\n"
+        f"report['failures'] = {failures!r}\n"
+        "json.dump(report, open(path, 'w'))\n"
+        f"sys.exit({code})\n",
         encoding="utf-8",
     )
     assert probe_command([sys.executable, str(liar)]) == Verdict.none()

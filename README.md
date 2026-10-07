@@ -126,6 +126,9 @@ ran and which failed.
 from kindkit import Mutant, gate, probe_command
 
 HERE = os.path.dirname(os.path.abspath(__file__))  # anchored, not the cwd
+# A runner that takes the implementation to test as its first argument and
+# hands the rest of argv to `cli.main` -- the runner above, with that one line.
+RUNNER = os.path.join(HERE, "run_cases.py")
 
 
 def probe(path):
