@@ -189,10 +189,27 @@ def test_a_fixture_that_is_not_utf8_is_a_hard_failure_naming_case_and_file(tmp_p
         discover(root, (".kv",))
 
 
-def test_a_fixture_that_is_not_utf8_exits_no_verdict_not_a_case_failure(tmp_path):
-    # In a fresh process, because the exit code is the contract: a
-    # UnicodeDecodeError escaping `cli.main` exits 1, which says a case failed.
-    root = _non_utf8_case(tmp_path)
+def _non_utf8_manifest(tmp_path) -> str:
+    case_dir = tmp_path / "latin1"
+    case_dir.mkdir()
+    (case_dir / "expect.json").write_bytes(b'{"kind": "caf\xe9"}')
+    (case_dir / "input.kv").write_text("a=1\n")
+    return str(tmp_path)
+
+
+def test_a_manifest_that_is_not_utf8_is_a_hard_failure_naming_case_and_file(tmp_path):
+    root = _non_utf8_manifest(tmp_path)
+    with pytest.raises(FixtureTreeError, match=r"^latin1: cannot read expect\.json: "):
+        discover(root, (".kv",))
+
+
+def test_a_manifest_that_is_not_utf8_exits_no_verdict_not_a_case_failure(tmp_path):
+    root = _non_utf8_manifest(tmp_path)
+    assert _cli_exit_in_a_fresh_process(root) == (cli.EXIT_NO_VERDICT, True)
+
+
+def _cli_exit_in_a_fresh_process(root: str) -> tuple[int, bool]:
+    """(exit code, whether stderr says HARD FAILURE naming latin1)."""
     code = (
         "import sys, kvkind\n"
         "from kindkit import cli\n"
@@ -202,8 +219,14 @@ def test_a_fixture_that_is_not_utf8_exits_no_verdict_not_a_case_failure(tmp_path
     proc = subprocess.run(
         [sys.executable, "-c", code], cwd=REPO_ROOT, env=env, capture_output=True, text=True
     )
-    assert proc.returncode == cli.EXIT_NO_VERDICT, proc.stderr
-    assert "HARD FAILURE: latin1: cannot read input.kv" in proc.stderr
+    return proc.returncode, "HARD FAILURE: latin1: cannot read" in proc.stderr
+
+
+def test_a_fixture_that_is_not_utf8_exits_no_verdict_not_a_case_failure(tmp_path):
+    # In a fresh process, because the exit code is the contract: a
+    # UnicodeDecodeError escaping `cli.main` exits 1, which says a case failed.
+    root = _non_utf8_case(tmp_path)
+    assert _cli_exit_in_a_fresh_process(root) == (cli.EXIT_NO_VERDICT, True)
 
 
 # --------------------------------------------------------------------------
