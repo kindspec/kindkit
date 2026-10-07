@@ -40,6 +40,7 @@ hand: see `_splice`.
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 import subprocess
 import sys
@@ -978,6 +979,25 @@ MUTATIONS: tuple[Mutation, ...] = (
         ("tests/test_case_schema.py::test_a_pattern_the_two_flavours_read_differently_is_refused",),
     ),
     Mutation(
+        # Like the bytecode entry above, this mutates the gate itself and is
+        # seen only by the pytest subprocess, which imports this file afresh.
+        "a byte splice that breaks the JSON is scored instead of refused",
+        "tools/mutation_gate.py",
+        '    if mutation.path.endswith(".json"):',
+        "    if False:",
+        (
+            "tests/test_mutation_gate.py::"
+            "test_a_byte_splice_that_breaks_the_json_is_refused_not_scored",
+        ),
+    ),
+    Mutation(
+        "the JSON mutations the parse check covers filter down to none",
+        "tests/test_mutation_gate.py",
+        'JSON_MUTATIONS = [m for m in mutation_gate.MUTATIONS if m.path.endswith(".json")]',
+        'JSON_MUTATIONS = [m for m in mutation_gate.MUTATIONS if m.path.endswith(".nothing")]',
+        ("tests/test_mutation_gate.py::test_there_are_json_mutations_to_check",),
+    ),
+    Mutation(
         # Version-free on purpose: prefixing the pin moves it off the locked
         # ruff whatever that is, so a deliberate bump does not stale this entry.
         "the ruff hook drifts from the ruff the project locks",
@@ -1053,13 +1073,26 @@ def _splice(mutation: Mutation, original: str) -> str:
     back, and `main` scores the mutation BROKEN and fails the run. The
     uniqueness half of the contract is kept by hand here, because that half
     still applies.
+
+    So is the CHECKED half. `apply_mutant` compiles what it splices; a byte
+    splice that broke the file's syntax would otherwise be accepted, the
+    suite would fall over on the parse error, and the gate would score that
+    as a kill of a change nothing detected. JSON is parsed for the same
+    reason. Any other extension is spliced unchecked: add its parser here
+    before relying on a mutation of one.
     """
     if mutation.path.endswith(".py"):
         return apply_mutant(original, mutation.find, mutation.replace)
     occurrences = original.count(mutation.find)
     if occurrences != 1:
         raise MutantError(f"pattern matched {occurrences} times, expected 1")
-    return original.replace(mutation.find, mutation.replace)
+    mutated = original.replace(mutation.find, mutation.replace)
+    if mutation.path.endswith(".json"):
+        try:
+            json.loads(mutated)
+        except json.JSONDecodeError as exc:
+            raise MutantError(f"mutated JSON does not parse: {exc}") from None
+    return mutated
 
 
 def apply(mutation: Mutation) -> tuple[str, str, str, str | None]:
