@@ -40,6 +40,7 @@ hand: see `_splice`.
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 import subprocess
 import sys
@@ -176,6 +177,36 @@ MUTATIONS: tuple[Mutation, ...] = (
         'raise FixtureTreeError(f"{cid}: two fixtures share the stem {stem!r}")',
         "pass",
         ("tests/test_runner.py::test_two_fixtures_sharing_a_stem_is_a_hard_failure",),
+    ),
+    Mutation(
+        "a fixture that is not UTF-8 escapes as exit 1, a case failure",
+        RUNNER,
+        'raise FixtureTreeError(f"{cid}: cannot read {name}: {exc}") from exc',
+        "raise",
+        (
+            "tests/test_runner.py::test_a_fixture_that_is_not_utf8_is_a_hard_failure_naming_case_and_file",
+            "tests/test_runner.py::test_a_fixture_that_is_not_utf8_exits_no_verdict_not_a_case_failure",
+        ),
+    ),
+    Mutation(
+        "a manifest that is not UTF-8 escapes as exit 1, a case failure",
+        RUNNER,
+        "except (OSError, json.JSONDecodeError, UnicodeDecodeError) as exc:",
+        "except (OSError, json.JSONDecodeError) as exc:",
+        (
+            "tests/test_runner.py::test_a_manifest_that_is_not_utf8_is_a_hard_failure_naming_case_and_file",
+            "tests/test_runner.py::test_a_manifest_that_is_not_utf8_exits_no_verdict_not_a_case_failure",
+        ),
+    ),
+    Mutation(
+        "the validator tracebacks on a manifest that is not UTF-8",
+        VALIDATOR,
+        "except (OSError, json.JSONDecodeError, UnicodeDecodeError, NotRFC8259) as exc:",
+        "except (OSError, json.JSONDecodeError, NotRFC8259) as exc:",
+        (
+            "tests/test_case_schema.py::"
+            "test_a_manifest_that_is_not_utf8_is_reported_invalid_not_a_traceback",
+        ),
     ),
     Mutation(
         "fixtures stop being read as exact bytes",
@@ -567,8 +598,8 @@ MUTATIONS: tuple[Mutation, ...] = (
     Mutation(
         "the gate mutates the implementation in place",
         MUTATION,
-        "            verdict = _probe(probe, scratch_path, mutated)",
-        "            verdict = _probe(probe, src_path, mutated)",
+        "            verdict = _probe(probe, scratch_path, mutated, next(stamps))",
+        "            verdict = _probe(probe, src_path, mutated, next(stamps))",
         (T_MUT + "test_the_gate_never_writes_to_the_implementation",),
     ),
     Mutation(
@@ -792,6 +823,37 @@ MUTATIONS: tuple[Mutation, ...] = (
         "    if os.path.realpath(scratch_path) == os.path.realpath(src_path):",
         "    if False:",
         (T_MUT + "test_a_scratch_path_that_is_the_source_is_refused",),
+    ),
+    Mutation(
+        "a scratch write keeps the wall-clock mtime, so writes share a second",
+        MUTATION,
+        "    os.utime(path, (stamp, stamp))",
+        "    pass",
+        (T_MUT + "test_a_mutant_is_never_served_bytecode_the_purge_cannot_see",),
+    ),
+    Mutation(
+        "every scratch write in a run gets the same mtime",
+        MUTATION,
+        "    stamps = itertools.count(random.SystemRandom().randrange(*_STAMP_RANGE), _STAMP_STEP)",
+        "    stamps = itertools.repeat(random.SystemRandom().randrange(*_STAMP_RANGE))",
+        (T_MUT + "test_a_mutant_is_never_served_bytecode_the_purge_cannot_see",),
+    ),
+    Mutation(
+        "scratch writes are stamped one second apart, which FAT stores as equal",
+        MUTATION,
+        "_STAMP_STEP = 2",
+        "_STAMP_STEP = 1",
+        (T_MUT + "test_consecutive_scratch_writes_are_two_seconds_apart",),
+    ),
+    Mutation(
+        "the first stamp comes from the caller's seedable random generator",
+        MUTATION,
+        "random.SystemRandom().randrange(*_STAMP_RANGE), _STAMP_STEP",
+        "random.randrange(*_STAMP_RANGE), _STAMP_STEP",
+        (
+            T_MUT + "test_a_callers_random_generator_is_not_drawn_from",
+            T_MUT + "test_a_callers_random_seed_does_not_fix_the_stamps",
+        ),
     ),
     Mutation(
         "a run that killed nothing reports a pass",
@@ -1198,6 +1260,25 @@ MUTATIONS: tuple[Mutation, ...] = (
         (T_GATE + "test_a_gate_that_exits_non_zero_fails_whatever_its_report_says",),
     ),
     Mutation(
+        # Like the bytecode entry above, this mutates the gate itself and is
+        # seen only by the pytest subprocess, which imports this file afresh.
+        "a byte splice that breaks the JSON is scored instead of refused",
+        "tools/mutation_gate.py",
+        '    if mutation.path.endswith(".json"):',
+        "    if False:",
+        (
+            "tests/test_mutation_gate.py::"
+            "test_a_byte_splice_that_breaks_the_json_is_refused_not_scored",
+        ),
+    ),
+    Mutation(
+        "the JSON mutations the parse check covers filter down to none",
+        "tests/test_mutation_gate.py",
+        'JSON_MUTATIONS = [m for m in mutation_gate.MUTATIONS if m.path.endswith(".json")]',
+        'JSON_MUTATIONS = [m for m in mutation_gate.MUTATIONS if m.path.endswith(".nothing")]',
+        ("tests/test_mutation_gate.py::test_there_are_json_mutations_to_check",),
+    ),
+    Mutation(
         # Version-free on purpose: prefixing the pin moves it off the locked
         # ruff whatever that is, so a deliberate bump does not stale this entry.
         "the ruff hook drifts from the ruff the project locks",
@@ -1273,13 +1354,26 @@ def _splice(mutation: Mutation, original: str) -> str:
     back, and `main` scores the mutation BROKEN and fails the run. The
     uniqueness half of the contract is kept by hand here, because that half
     still applies.
+
+    So is the CHECKED half. `apply_mutant` compiles what it splices; a byte
+    splice that broke the file's syntax would otherwise be accepted, the
+    suite would fall over on the parse error, and the gate would score that
+    as a kill of a change nothing detected. JSON is parsed for the same
+    reason. Any other extension is spliced unchecked: add its parser here
+    before relying on a mutation of one.
     """
     if mutation.path.endswith(".py"):
         return apply_mutant(original, mutation.find, mutation.replace)
     occurrences = original.count(mutation.find)
     if occurrences != 1:
         raise MutantError(f"pattern matched {occurrences} times, expected 1")
-    return original.replace(mutation.find, mutation.replace)
+    mutated = original.replace(mutation.find, mutation.replace)
+    if mutation.path.endswith(".json"):
+        try:
+            json.loads(mutated)
+        except json.JSONDecodeError as exc:
+            raise MutantError(f"mutated JSON does not parse: {exc}") from None
+    return mutated
 
 
 def apply(mutation: Mutation) -> tuple[str, str, str, str | None]:

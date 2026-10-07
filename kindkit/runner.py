@@ -185,7 +185,7 @@ def _read_expect(dirpath: str, cid: str) -> Mapping[str, object]:
     try:
         with open(path, encoding="utf-8") as handle:
             expect = json.load(handle)
-    except (OSError, json.JSONDecodeError) as exc:
+    except (OSError, json.JSONDecodeError, UnicodeDecodeError) as exc:
         # Not a case failure. A manifest that cannot be parsed does not assert
         # anything, so counting it among the cases would let an unreadable tree
         # dilute itself into a percentage.
@@ -219,8 +219,13 @@ def _read_fixtures(
                 raise FixtureTreeError(f"{cid}: two fixtures share the stem {stem!r}")
             # newline="" so no universal-newline translation happens: a case
             # that asserts a CRLF survives a round trip needs the CRLF.
-            with open(os.path.join(dirpath, name), encoding="utf-8", newline="") as handle:
-                files[stem] = handle.read()
+            try:
+                with open(os.path.join(dirpath, name), encoding="utf-8", newline="") as handle:
+                    files[stem] = handle.read()
+            except UnicodeDecodeError as exc:
+                # A ValueError, so it would escape `cli.main` as exit 1 -- "a
+                # case failed" -- when no case was ever opened.
+                raise FixtureTreeError(f"{cid}: cannot read {name}: {exc}") from exc
             break
     return files
 
