@@ -886,6 +886,13 @@ MUTATIONS: tuple[Mutation, ...] = (
             "test_a_byte_splice_that_breaks_the_json_is_refused_not_scored",
         ),
     ),
+    Mutation(
+        "the JSON mutations the parse check covers filter down to none",
+        "tests/test_mutation_gate.py",
+        'JSON_MUTATIONS = [m for m in mutation_gate.MUTATIONS if m.path.endswith(".json")]',
+        'JSON_MUTATIONS = [m for m in mutation_gate.MUTATIONS if m.path.endswith(".nothing")]',
+        ("tests/test_mutation_gate.py::test_there_are_json_mutations_to_check",),
+    ),
 )
 
 

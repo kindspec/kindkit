@@ -125,11 +125,17 @@ def test_a_byte_splice_that_breaks_the_json_is_refused_not_scored():
         mutation_gate._splice(broken, _schema())
 
 
-@pytest.mark.parametrize(
-    "mutation",
-    [m for m in mutation_gate.MUTATIONS if m.path.endswith(".json")],
-    ids=lambda m: m.label,
-)
+#: The gate's byte-path mutations of JSON. Four today, all of the schema.
+JSON_MUTATIONS = [m for m in mutation_gate.MUTATIONS if m.path.endswith(".json")]
+
+
+def test_there_are_json_mutations_to_check():
+    # Not parametrised, so it cannot skip: an empty parameter set makes the
+    # test below SKIP and pytest exit 0, a pass over nothing.
+    assert len(JSON_MUTATIONS) >= 4, f"only {len(JSON_MUTATIONS)} JSON mutation(s) in the gate"
+
+
+@pytest.mark.parametrize("mutation", JSON_MUTATIONS, ids=lambda m: m.label)
 def test_every_json_mutation_in_the_gate_still_parses(mutation):
     # The other direction: the refusal must not cost a real mutation, so a
     # kill scored on one of these is a kill on the change it names.
