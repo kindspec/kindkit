@@ -83,6 +83,20 @@ def _leak_xdg_attributes(tmp, env):
     env.setenv("XDG_CONFIG_HOME", str(tmp / "xdg"))
 
 
+def _leak_home_xdg_default(tmp, env):
+    # The common case: XDG unset, so git reads ~/.config/git/attributes.
+    _union_attributes(tmp / ".config" / "git" / "attributes")
+    env.delenv("XDG_CONFIG_HOME", raising=False)
+    env.setenv("HOME", str(tmp))
+
+
+def _leak_config_count(tmp, env):
+    # What `git -c merge.conflictStyle=diff3` exports to its children.
+    env.setenv("GIT_CONFIG_COUNT", "1")
+    env.setenv("GIT_CONFIG_KEY_0", "merge.conflictStyle")
+    env.setenv("GIT_CONFIG_VALUE_0", "diff3")
+
+
 def _leak_git_dir(tmp, env):
     # Inherited from a hook or an outer `git` process.
     env.setenv("GIT_DIR", str(tmp / "elsewhere.git"))
@@ -90,8 +104,22 @@ def _leak_git_dir(tmp, env):
 
 @pytest.mark.parametrize(
     "leak",
-    [_leak_conflict_style, _leak_attributes_file, _leak_xdg_attributes, _leak_git_dir],
-    ids=["global-conflict-style", "global-attributes-file", "xdg-attributes", "git-dir"],
+    [
+        _leak_conflict_style,
+        _leak_attributes_file,
+        _leak_home_xdg_default,
+        _leak_xdg_attributes,
+        _leak_config_count,
+        _leak_git_dir,
+    ],
+    ids=[
+        "global-conflict-style",
+        "global-attributes-file",
+        "home-xdg-default",
+        "xdg-attributes",
+        "config-count",
+        "git-dir",
+    ],
 )
 def test_the_callers_git_environment_does_not_reach_the_merge(leak, tmp_path, monkeypatch):
     """Stock git means unconfigured git, not the git of whoever runs the suite.

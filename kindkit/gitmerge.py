@@ -24,27 +24,32 @@ CLEAN = "clean"
 CONFLICT = "conflict"
 
 
-def _stock_env() -> dict[str, str]:
+def _stock_env(nowhere: str) -> dict[str, str]:
     """The caller's environment with every way to configure git taken out.
 
     Unconfigured means unconfigured on this machine too: a global
-    `merge.conflictStyle`, a `merge=union` attribute in the global or XDG
-    attributes file, or a `GIT_DIR` inherited from a hook all change what the
-    merge does, and CI -- whose runners carry none of them -- would disagree
-    with a developer's run in silence.
+    `merge.conflictStyle`, a `merge=union` attribute in a global attributes
+    file, or a `GIT_DIR` or `git -c` setting inherited from an outer git
+    process all change what the merge does, and CI -- whose runners carry
+    none of them -- would disagree with a developer's run in silence.
+
+    Git finds per-user settings through `HOME` (`~/.gitconfig`, and
+    `~/.config/git/` when `XDG_CONFIG_HOME` is unset) and `XDG_CONFIG_HOME`,
+    so both point at ``nowhere``, a path that does not exist. That holds on
+    every git version, where `GIT_CONFIG_GLOBAL` needs 2.32 or later.
     """
     env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
-    env["GIT_CONFIG_GLOBAL"] = os.devnull
+    env["HOME"] = nowhere
+    env["XDG_CONFIG_HOME"] = nowhere
     env["GIT_CONFIG_NOSYSTEM"] = "1"
     env["GIT_ATTR_NOSYSTEM"] = "1"
-    # The default core.attributesFile is $XDG_CONFIG_HOME/git/attributes, read
-    # even when no config names it. Point it at a directory that cannot exist.
-    env["XDG_CONFIG_HOME"] = os.path.join(os.devnull, "kindkit")
     return env
 
 
-def _git(*args: str, cwd: str | None = None) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(("git", *args), cwd=cwd, capture_output=True, text=True, env=_stock_env())
+def _git(
+    env: dict[str, str], *args: str, cwd: str | None = None
+) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(("git", *args), cwd=cwd, capture_output=True, text=True, env=env)
 
 
 def merge(base: str, branches: Sequence[str], filename: str) -> tuple[str, str]:
@@ -62,8 +67,9 @@ def merge(base: str, branches: Sequence[str], filename: str) -> tuple[str, str]:
     handed a conflicted file is exactly what some cases assert about.
     """
     workdir = tempfile.mkdtemp(prefix="kindkit-merge-")
+    env = _stock_env(os.path.join(workdir, ".no-home"))
     try:
-        if _git("init", "-q", workdir).returncode:
+        if _git(env, "init", "-q", workdir).returncode:
             raise RuntimeError("git init failed: merge cases cannot be run")
         for key, value in (
             ("user.email", "t@e"),
@@ -77,25 +83,25 @@ def merge(base: str, branches: Sequence[str], filename: str) -> tuple[str, str]:
             ("gc.auto", "0"),
             ("maintenance.auto", "false"),
         ):
-            _git("config", key, value, cwd=workdir)
+            _git(env, "config", key, value, cwd=workdir)
 
         path = os.path.join(workdir, filename)
         _write(path, base)
-        _git("add", "-A", cwd=workdir)
-        if _git("commit", "-qm", "b", cwd=workdir).returncode:
+        _git(env, "add", "-A", cwd=workdir)
+        if _git(env, "commit", "-qm", "b", cwd=workdir).returncode:
             raise RuntimeError("git commit failed: merge cases cannot be run")
-        _git("branch", "-M", "main", cwd=workdir)
+        _git(env, "branch", "-M", "main", cwd=workdir)
 
         for index, text in enumerate(branches):
-            _git("checkout", "-q", "main", cwd=workdir)
-            _git("checkout", "-qb", f"b{index}", cwd=workdir)
+            _git(env, "checkout", "-q", "main", cwd=workdir)
+            _git(env, "checkout", "-qb", f"b{index}", cwd=workdir)
             _write(path, text)
-            if _git("commit", "-qam", f"b{index}", cwd=workdir).returncode:
+            if _git(env, "commit", "-qam", f"b{index}", cwd=workdir).returncode:
                 raise RuntimeError(f"git commit failed on branch b{index}")
 
-        _git("checkout", "-q", "main", cwd=workdir)
+        _git(env, "checkout", "-q", "main", cwd=workdir)
         for index in range(len(branches)):
-            if _git("merge", f"b{index}", "-m", "m", cwd=workdir).returncode:
+            if _git(env, "merge", f"b{index}", "-m", "m", cwd=workdir).returncode:
                 return CONFLICT, _read(path)
         return CLEAN, _read(path)
     finally:
