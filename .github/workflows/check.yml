@@ -1,5 +1,12 @@
 name: check
-on: [push, pull_request]
+# Pushes to main only. A PR branch then produces each required check (`check`
+# and `kind / conformance`) once, from the pull_request run; with a bare `push`
+# every push to a PR branch ran both twice, and the merge gate resolved each
+# required name to whichever of two runs it found (as kindspec/rowspec#43).
+on:
+  push:
+    branches: [main]
+  pull_request:
 
 permissions:
   contents: read
