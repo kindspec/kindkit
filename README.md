@@ -1,11 +1,12 @@
 # kindkit
 
-**Status: pre-release, untagged, and in use.** rowspec runs its suite and its
-mutation gate on this kit
+**Status: pre-release, and in use.** Tagged `v0.1.0`, not on PyPI; `main` has
+moved on since the tag. rowspec runs its suite and its mutation gate on this kit
 ([kindspec/rowspec#46](https://github.com/kindspec/rowspec/pull/46)), as a dev
-dependency pinned to a commit — its `pyproject.toml` names which. rowspec's
-CI is still its own: the reusable workflow below has so far been called only
-by this repository, on its own toy tree.
+dependency pinned to a commit — its `pyproject.toml` names which — and its CI
+calls the reusable workflow below at that same commit
+([kindspec/rowspec#78](https://github.com/kindspec/rowspec/pull/78)), where it
+reports as `kind / conformance`.
 
 The shared machinery behind every [kindspec](https://github.com/kindspec) kind:
 the tree-driven conformance runner, the mutation gate, the case-tree convention,
@@ -356,9 +357,9 @@ workflow which file is the reference. The report records `source` so that a
 caller, or a reviewer reading the log, can check it; the step prints it.
 
 **A kind needs a kindkit new enough for all of this.** That means the
-`root` key, `KINDKIT_REPORT_JSON` and `KINDKIT_GATE_REPORT`. rowspec's
-current pin does not have them, so adopting the workflow there includes
-bumping the pin.
+`root` key, `KINDKIT_REPORT_JSON` and `KINDKIT_GATE_REPORT`, none of which
+`v0.1.0` has. rowspec moved its pin before adopting the workflow
+([kindspec/rowspec#77](https://github.com/kindspec/rowspec/pull/77)).
 
 **Pin `uses:` to a commit, and grant `actions: read`.** The workflow fetches
 this repository's `tools/` at the commit named in `uses:`. A called workflow
@@ -381,9 +382,11 @@ consumer's required check unreported, and their pull requests stuck at
 
 ### Adopting it where `conformance` is already a required check
 
-rowspec's case: its ruleset requires `conformance`, a job that also runs
-`just check`, `just test` and corpus checks. The workflow runs only its four
-gates.
+rowspec's case, done in
+[kindspec/rowspec#78](https://github.com/kindspec/rowspec/pull/78): its ruleset
+required `conformance`, a job that also ran `just check` and `just test`. The
+workflow runs only its four gates, so rowspec kept `conformance` for the rest
+and now requires both it and `kind / conformance` — the first branch of step 3.
 
 1. **Keep what the workflow does not run in a job of your own.** That is
    lint, tests, and anything kind-specific, such as rowspec's `xlsx-extra`
