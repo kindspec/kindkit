@@ -464,7 +464,7 @@ def test_a_mutant_is_never_served_bytecode_the_purge_cannot_see(tmp_path):
     # Without both of these the collision was never possible, and a pass here
     # would say nothing: no bytecode in the probe's prefix, or writes so slow
     # that no two of them shared a second.
-    assert glob.glob(str(prefix / "**" / "under_test.*.pyc"), recursive=True)
+    assert glob.glob(str(prefix / "**" / "under_test.*.pyc"), recursive=True, include_hidden=True)
     assert elapsed < 2 * _PAIRS - 1, f"{elapsed:.1f}s: too slow to share an mtime second"
 
     assert report.killed == tuple(f"b{i:02d}" for i in range(_PAIRS))
