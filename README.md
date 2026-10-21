@@ -5,10 +5,11 @@ tags, starting at `0.2.0` (`v0.1.0` is a tag only); install with
 `pip install kindkit`. `main` may be ahead of the latest release. rowspec runs
 its suite and its mutation gate on this kit
 ([kindspec/rowspec#46](https://github.com/kindspec/rowspec/pull/46)), as a dev
-dependency pinned to a commit — its `pyproject.toml` names which — and its CI
-calls the reusable workflow below at that same commit
-([kindspec/rowspec#78](https://github.com/kindspec/rowspec/pull/78)), where it
-reports as `kind / conformance`.
+dependency pinned to a release — its `pyproject.toml` names which — and its CI
+calls the reusable workflow below at the commit that release was tagged from
+([kindspec/rowspec#78](https://github.com/kindspec/rowspec/pull/78),
+[#275](https://github.com/kindspec/rowspec/pull/275)), where it reports as
+`kind / conformance`.
 
 The shared machinery behind every [kindspec](https://github.com/kindspec) kind:
 the tree-driven conformance runner, the mutation gate, the case-tree convention,
