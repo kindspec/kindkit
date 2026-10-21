@@ -48,6 +48,10 @@ include = [
   # ship too: an unpacked sdist that carries the recipe and not the tool fails
   # at the one command that proves the suite can fail.
   "/tools",
+  # The convention and its schema, with their CC0 LICENSE. tools/ reads
+  # case-tree/expect.schema.json, so an sdist without it ships a validator
+  # and a mutation gate that cannot load the schema they check against.
+  "/case-tree",
   "/README.md",
   "/LICENSE",
   "/LICENSES",
