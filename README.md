@@ -1,7 +1,9 @@
 # kindkit
 
-**Status: pre-release, and in use.** Tagged `v0.1.0`, not on PyPI; `main` has
-moved on since the tag. rowspec runs its suite and its mutation gate on this kit
+**Status: pre-release, and in use.** Published on PyPI as `kindkit` from `v*`
+tags, starting at `0.2.0` (`v0.1.0` is a tag only); install with
+`pip install kindkit`. `main` may be ahead of the latest release. rowspec runs
+its suite and its mutation gate on this kit
 ([kindspec/rowspec#46](https://github.com/kindspec/rowspec/pull/46)), as a dev
 dependency pinned to a commit — its `pyproject.toml` names which — and its CI
 calls the reusable workflow below at that same commit
@@ -358,7 +360,8 @@ caller, or a reviewer reading the log, can check it; the step prints it.
 
 **A kind needs a kindkit new enough for all of this.** That means the
 `root` key, `KINDKIT_REPORT_JSON` and `KINDKIT_GATE_REPORT`, none of which
-`v0.1.0` has. rowspec moved its pin before adopting the workflow
+`v0.1.0` has; `0.2.0` is the first release that does. rowspec moved its
+pin before adopting the workflow
 ([kindspec/rowspec#77](https://github.com/kindspec/rowspec/pull/77)).
 
 **Pin `uses:` to a commit, and grant `actions: read`.** The workflow fetches
