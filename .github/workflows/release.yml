@@ -145,15 +145,18 @@ jobs:
           print("wheel runner: passes Good, fails the negative control Raw")
           PY
 
-      # The sdist ships tools/ so its recipes run, and the validator reads
-      # case-tree/expect.schema.json. Run it from the UNPACKED sdist, in a
+      # The sdist ships tests/ and tools/ so they run from it: the suite reads
+      # uv.lock and .pre-commit-config.yaml, and the validator reads
+      # case-tree/expect.schema.json. Run both from the UNPACKED sdist, in a
       # directory with no checkout around it, so a file the include list drops
-      # fails here and not for whoever unpacks the release.
-      - name: the sdist's own validator runs from the unpacked sdist
+      # fails here and not for whoever unpacks the release. `--locked` refuses
+      # an sdist whose uv.lock disagrees with its pyproject.toml.
+      - name: the sdist's own suite and validator run from the unpacked sdist
         run: |
           d=$(mktemp -d)
           tar -xzf dist/*.tar.gz -C "$d"
           cd "$d"/kindkit-*/
+          uv run --exact --locked pytest -q -p no:cacheprovider
           python3 -I tools/validate_case_tree.py tests/fixtures/kv
 
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
