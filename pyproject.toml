@@ -57,6 +57,10 @@ include = [
   "/LICENSES",
   "/justfile",
   "/pyproject.toml",
+  # tests/test_tooling.py checks the ruff hook against the ruff the project
+  # locks, so it reads both files. Without them the shipped suite fails.
+  "/uv.lock",
+  "/.pre-commit-config.yaml",
 ]
 
 [dependency-groups]
