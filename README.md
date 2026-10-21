@@ -360,7 +360,8 @@ caller, or a reviewer reading the log, can check it; the step prints it.
 
 **A kind needs a kindkit new enough for all of this.** That means the
 `root` key, `KINDKIT_REPORT_JSON` and `KINDKIT_GATE_REPORT`, none of which
-`v0.1.0` has; `0.2.0` is the first release that does. rowspec moved its pin before adopting the workflow
+`v0.1.0` has; `0.2.0` is the first release that does. rowspec moved its
+pin before adopting the workflow
 ([kindspec/rowspec#77](https://github.com/kindspec/rowspec/pull/77)).
 
 **Pin `uses:` to a commit, and grant `actions: read`.** The workflow fetches
