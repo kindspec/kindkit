@@ -1,0 +1,162 @@
+# Publishes to PyPI via a Trusted Publisher (OIDC). No API token is stored
+# anywhere: PyPI is configured to trust this repository, this workflow file by
+# name (`release.yml`), and the `pypi` environment below. Changing any of those
+# three breaks publication rather than silently publishing from somewhere
+# unexpected. The `pypi` environment is deployable only from `v*` tags.
+#
+# `workflow_dispatch` is a dry run: every gate, the build and the wheel smoke
+# test run, and `publish` is skipped because the ref is not a tag.
+#
+# Tags only, never a branch: a `push` with no branch filter would make this a
+# second producer of every check its jobs share a name with (kindspec/.github
+# AGENTS.md §3.2). None of these jobs runs on a pull request.
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  # The gate runs FIRST and publication depends on it. A release that skips the
+  # suite would ship an artifact nothing had checked -- and this project's
+  # recurring defect is a check that quietly stops running, so the one place it
+  # must be impossible to skip is the one that reaches strangers. These are the
+  # same gates check.yml runs on a pull request, so the tagged commit is held
+  # to them here and not only by the PR that merged it.
+  gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+      - name: install just
+        run: |
+          uv tool install rust-just
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+      - name: just is actually on PATH
+        run: just --version
+      - name: lint and format
+        run: just check
+      - name: tests
+        run: just test
+      - name: the suite must be able to fail
+        run: just mutants
+
+  # The reusable workflow on the kit's own toy tree, as check.yml calls it.
+  kind:
+    permissions:
+      contents: read
+      actions: read
+    uses: ./.github/workflows/kind.yml
+    with:
+      fixture-root: tests/fixtures/kv
+      suite: uv run python tests/run_kv.py tests/kvkind.py Good
+      second-implementation: uv run python tests/run_kv.py tests/kvkind.py Alt
+      mutants: uv run python tests/kv_mutants.py
+
+  build:
+    needs: [gate, kind]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+      - run: uv build
+
+      # The tag is the version. A mismatch means the artifact on PyPI would not
+      # be the commit the tag names, and PyPI publication is irreversible.
+      - name: the tag must match the version in pyproject.toml
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          built=$(ls dist/*.tar.gz | sed -E 's/.*kindkit-(.*)\.tar\.gz/\1/')
+          if [ "$tag" != "$built" ]; then
+            echo "::error::tag v$tag does not match built version $built"
+            exit 1
+          fi
+          echo "tag v$tag matches built version $built"
+
+      # The wheel ships the kit and its licences, nothing else. tests/, tools/
+      # and case-tree/ belong to the sdist and the repository, and a wheel that
+      # carried them would install a top-level `tests` package into strangers'
+      # environments.
+      - name: the wheel contains only kindkit and its metadata
+        run: |
+          python3 - dist/*.whl <<'PY'
+          import sys, zipfile
+          names = zipfile.ZipFile(sys.argv[1]).namelist()
+          stray = [n for n in names
+                   if not n.startswith("kindkit/") and ".dist-info/" not in n]
+          if stray:
+              print(f"::error::the wheel carries files outside kindkit/: {stray}")
+              sys.exit(1)
+          if "kindkit/py.typed" not in names:
+              print("::error::the wheel has no kindkit/py.typed")
+              sys.exit(1)
+          print(f"wheel: {len(names)} files, all under kindkit/ or dist-info")
+          PY
+
+      # An artifact the toy suite cannot run on is not publishable. Nor is one
+      # whose `kindkit.__version__` disagrees with its metadata, or that imports
+      # anything outside the stdlib. The suite runs from the checkout's tests/,
+      # but `kindkit` must resolve to the installed wheel, not the checkout.
+      # Running a script puts its own directory, tests/, on sys.path, not the
+      # repository root; a script read from stdin puts the working directory
+      # there instead, which is the checkout -- hence `-P`, which adds nothing.
+      # And the installed runner must be able to fail: the negative control,
+      # `Raw`, has to come back red.
+      - name: the built wheel actually works
+        run: |
+          uv run --with dist/*.whl --no-project python -P - <<'PY'
+          import importlib.metadata, os, subprocess, sys
+
+          before = set(sys.modules)
+          import kindkit, kindkit.cli, kindkit.gitmerge, kindkit.mutation, kindkit.runner
+          added = sorted(set(sys.modules) - before)
+          leaked = [m for m in added
+                    if m.split(".")[0] not in sys.stdlib_module_names
+                    and not m.startswith(("kindkit", "_"))]
+          assert not leaked, f"importing the wheel pulled in {leaked}"
+
+          here = os.path.realpath(os.getcwd())
+          where = os.path.realpath(kindkit.__file__)
+          assert not where.startswith(here + os.sep), (
+              f"kindkit imported from the checkout ({where}), not the wheel")
+          meta = importlib.metadata.version("kindkit")
+          assert kindkit.__version__ == meta, (
+              f"kindkit.__version__ is {kindkit.__version__!r} but the wheel's "
+              f"metadata says {meta!r} ({where})")
+          print(f"wheel version: __version__ and metadata agree on {meta} ({where})")
+
+          def suite(impl):
+              r = subprocess.run(
+                  [sys.executable, "tests/run_kv.py", "tests/kvkind.py", impl],
+                  capture_output=True, text=True)
+              print(r.stdout + r.stderr)
+              return r.returncode
+
+          assert suite("Good") == kindkit.EXIT_OK, "the toy suite failed Good"
+          assert suite("Raw") == kindkit.EXIT_FAILURES, "the toy suite passed Raw"
+          print("wheel runner: passes Good, fails the negative control Raw")
+          PY
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: dist
+          path: dist/
+
+  publish:
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      id-token: write # the OIDC token the Trusted Publisher exchanges
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: dist
+          path: dist/
+      - uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # v1.14.2
