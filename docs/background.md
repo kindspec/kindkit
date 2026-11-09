@@ -13,7 +13,7 @@ calls the reusable workflow ([workflow.md](workflow.md)) at the commit that rele
 [#275](https://github.com/kindspec/rowspec/pull/275)), where it reports as
 `kind / conformance`.
 
-The shared machinery behind every [kindspec](https://github.com/kindspec) kind:
+The shared machinery behind the [kindspec](https://github.com/kindspec) kinds that use it, rowspec and blockspec:
 the tree-driven conformance runner, the mutation gate, the case-tree convention,
 and the CI workflow that runs them.
 
