@@ -11,7 +11,7 @@ from kindkit import Mutant, gate, probe_command
 
 HERE = os.path.dirname(os.path.abspath(__file__))  # anchored, not the cwd
 # A runner that takes the implementation to test as its first argument and
-# hands the rest of argv to `cli.main` -- the runner above, with that one line.
+# hands the rest of argv to `cli.main` -- the runner in runner.md, with that one line.
 RUNNER = os.path.join(HERE, "run_cases.py")
 
 
@@ -59,7 +59,7 @@ migration path for a gate already written as a table, and it refuses the
 orphan.
 
 **`probe_command`** runs a runner built on `kindkit.cli.main` — or any runner
-keeping the contract above — in a fresh process and reads back its
+keeping the contract in [runner.md](runner.md) — in a fresh process and reads back its
 `--report-json`, from a path created for that call alone so no earlier report
 can be read as this one. A timeout, an exit code other than 0 or 1, a missing
 report, or a report its exit code contradicts all come back as

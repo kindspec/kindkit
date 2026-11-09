@@ -15,8 +15,8 @@ def parse(case):
         refusal = None
     except mykind.Malformed as exc:
         refusal = str(exc)
-    if case.expect["accept"] and refusal is not None:
-        yield f"expected accept, got {refusal!r}"
+    if case.expect["accept"] != (refusal is None):
+        yield f"expected accept={case.expect['accept']}, got {refusal!r}"
 
 
 adapter = Adapter(fixture_suffixes=(".mykind",), handlers={"parse": parse})

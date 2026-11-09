@@ -8,7 +8,7 @@ tags, starting at `0.2.0` (`v0.1.0` is a tag only); install with
 its suite and its mutation gate on this kit
 ([kindspec/rowspec#46](https://github.com/kindspec/rowspec/pull/46)), as a dev
 dependency pinned to a release — its `pyproject.toml` names which — and its CI
-calls the reusable workflow below at the commit that release was tagged from
+calls the reusable workflow ([workflow.md](workflow.md)) at the commit that release was tagged from
 ([kindspec/rowspec#78](https://github.com/kindspec/rowspec/pull/78),
 [#275](https://github.com/kindspec/rowspec/pull/275)), where it reports as
 `kind / conformance`.
@@ -79,7 +79,7 @@ the case *definitions* — it reads them from the fixture tree — but the
 adapter's handlers are the kind's own Python, so a kind written in another
 language needs a thin Python shim that calls out to it. A runner written
 entirely outside the kit can still be probed, through the `--report-json`
-contract below.
+contract in [runner.md](runner.md).
 
 ## The case-tree convention
 
