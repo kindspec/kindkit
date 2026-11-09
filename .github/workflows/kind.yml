@@ -1,5 +1,5 @@
 # The reusable workflow a kind calls to run its case tree, its suite, its
-# second implementation and its mutation gate. See README, "Using the
+# second implementation and its mutation gate. See docs/workflow.md, "Using the
 # workflow".
 #
 # ONE job, and its name is part of the contract. A ruleset matches a required
@@ -40,7 +40,7 @@ on:
 
 # `actions: read` is for the one API read below, which finds the commit this
 # workflow was called at. A called workflow can hold no more than its caller
-# grants, so the CALLING job must grant both of these; see the README.
+# grants, so the CALLING job must grant both of these; see docs/workflow.md.
 permissions:
   contents: read
   actions: read
