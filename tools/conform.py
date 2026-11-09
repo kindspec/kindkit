@@ -6,7 +6,7 @@
 
 ``<command>`` is shell text that runs the suite against one implementation.
 It is run as written, with ``KINDKIT_REPORT_JSON`` naming a fresh path for
-the runner's report (README, "Using the runner"); a runner built on
+the runner's report (docs/runner.md); a runner built on
 ``kindkit.cli`` writes it there. An environment variable, not appended
 arguments, because the command is free text: after a trailing newline the
 arguments would be a command of their own, and after a trailing ``# comment``

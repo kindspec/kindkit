@@ -5,7 +5,7 @@ description = "The shared conformance machinery behind every kindspec kind"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = []
-authors = [{ name = "Cameron Brooks", email = "cambrooks3393@gmail.com" }]
+authors = [{ name = "Cameron Brooks" }]
 keywords = ["conformance", "fixtures", "git", "merge", "specification", "testing"]
 # The WHEEL contains only `kindkit`, which is MIT. The repository as a whole is
 # licensed per directory -- the case-tree conventions and schemas are CC0-1.0 --
@@ -52,6 +52,7 @@ include = [
   # case-tree/expect.schema.json, so an sdist without it ships a validator
   # and a mutation gate that cannot load the schema they check against.
   "/case-tree",
+  "/docs",
   "/README.md",
   "/LICENSE",
   "/LICENSES",

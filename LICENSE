@@ -1,7 +1,7 @@
 kindkit is licensed per directory, following the same split as the rest of
 kindspec.
 
-  runner, mutation gate, workflows    MIT
+  runner, mutation gate, workflows, docs    MIT
   case-tree conventions and schemas   CC0-1.0
 
 Full texts are in LICENSES/.
